@@ -252,9 +252,9 @@ dialog.panel form { display: flex; flex-direction: column; height: 100%; }
       (Project Settings > API > Project URL y anon public key)
    ========================================================= */
 const SUPABASE_URL = 'https://yoalzgvfpshdverbgors.supabase.co';
-const SUPABASE_ANON_KEY = 'T1Xfo0hfV1k14uXs2xDa';
+const SUPABASE_ANON_KEY = 'sb_publishable_ZHMN8aaLLQjpp-V8DshNmg_8yir-Zp9';
 
-const configurado = !SUPABASE_URL.includes('TU-PROYECTO');
+const configurado = !SUPABASE_URL.includes('ATLAS');
 const sb = configurado ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
 /* =========================================================
@@ -426,6 +426,21 @@ async function entrar(session) {
   mostrar(actual);
 }
 
+function explicarErrorLogin(error) {
+  const m = (error.message || '').toLowerCase();
+  if (m.includes('invalid login credentials'))
+    return 'La contraseña no coincide con ese correo, o el usuario no existe en Supabase (Authentication > Users).';
+  if (m.includes('email not confirmed'))
+    return 'Tu correo aún no está confirmado. En Supabase, confirma el usuario o vuelve a crearlo marcando "Auto Confirm User".';
+  if (m.includes('api key') || m.includes('apikey') || m.includes('jwt'))
+    return 'La llave de Supabase en index.html no es válida. Copia de nuevo la anon/publishable key en Project Settings > API.';
+  if (m.includes('failed to fetch') || m.includes('network') || m.includes('load failed'))
+    return 'No se pudo conectar con Supabase. Revisa que la Project URL en index.html esté bien escrita (https://xxxx.supabase.co).';
+  if (m.includes('email logins are disabled') || m.includes('provider is not enabled'))
+    return 'El acceso por correo está desactivado. En Supabase, activa Email en Authentication > Providers.';
+  return `Supabase respondió: ${error.message}`;
+}
+
 $('formLogin').addEventListener('submit', async e => {
   e.preventDefault();
   if (!configurado) return;
@@ -435,7 +450,7 @@ $('formLogin').addEventListener('submit', async e => {
     email: $('loginEmail').value.trim(), password: $('loginPass').value,
   });
   btn.disabled = false; btn.textContent = 'Entrar';
-  if (error) { mostrarLogin('Correo o contraseña incorrectos.'); return; }
+  if (error) { mostrarLogin(explicarErrorLogin(error)); return; }
   await entrar(data.session);
 });
 
