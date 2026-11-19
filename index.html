@@ -139,6 +139,14 @@ tr.seleccionada td { background: var(--accent-soft); }
 .lista-errores li:last-child { border-bottom: none; }
 .lista-errores strong { font-variant-numeric: tabular-nums; }
 .paso { font-size: .92rem; margin: 0 0 .75rem; }
+.buscador { position: relative; }
+.buscador-ops { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 5; margin: 0; padding: .25rem 0; list-style: none;
+  max-height: 260px; overflow-y: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 8px 20px rgba(0,0,0,.15); }
+.buscador-ops li { padding: .45rem .75rem; cursor: pointer; font-size: .92rem; }
+.buscador-ops li small { display: block; color: var(--muted); font-size: .8rem; }
+.buscador-ops li[aria-selected="true"], .buscador-ops li:hover { background: var(--accent-soft); }
+.buscador-ops li.sin { cursor: default; color: var(--muted); }
+.buscador-ops li.sin:hover { background: none; }
 .conteo { align-self: center; color: var(--muted); font-size: .88rem; white-space: nowrap; }
 .pop { position: fixed; z-index: 20; width: min(300px, calc(100vw - 16px)); background: var(--panel); color: var(--ink);
   border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 10px 28px rgba(0, 0, 0, .18); display: flex; flex-direction: column; overflow: hidden; }
@@ -351,6 +359,7 @@ const textoASpecs = t => {
 };
 
 const TIPOS_LINEA = { TELEFONIA: 'Telefonía', INTERNET: 'Internet', GPS: 'GPS' };
+const TIPOS_COLAB = { COLABORADOR: 'Colaborador', JEFE_AREA: 'Jefe de área' };
 const CONDICION_LINEA = { DISPONIBLE: 'Disponible', ASIGNADA: 'Asignada', SIN_DEFINIR: 'Sin definir' };
 const ESTATUS_LINEA = { ACTIVA: 'Activa', NO_EN_RADIOGRAFIA: 'No vino en la radiografía', BAJA: 'Baja' };
 const fmtFecha = d => d ? d.slice(0, 10).split('-').reverse().join('/') : '';
@@ -361,7 +370,7 @@ const CATALOGOS = {
     grupo: 'Inventario',
     titulo: 'Líneas', singular: 'línea', nuevo: 'Nueva línea', femenino: true, sinActivo: true,
     descripcion: 'Líneas de telefonía, internet y GPS. Se actualizan cargando la radiografía de Telcel.',
-    tabla: 'lineas', select: '*', orden: 'telefono',
+    tabla: 'lineas', select: '*', orden: 'telefono', sinColEstado: true,
     acciones: [{ texto: 'Cargar radiografía', fn: () => abrirCarga() }],
     seleccion: { campo: 'condicion', titulo: 'Cambiar condición a', opciones: CONDICION_LINEA },
     resumen: filas => {
@@ -412,7 +421,7 @@ const CATALOGOS = {
       { texto: 'Descargar layout', fn: () => descargarLayoutColab() },
       { texto: 'Cargar desde Excel', fn: () => abrirCargaColab() },
     ],
-    tabla: 'colaboradores', orden: 'apellidos',
+    tabla: 'colaboradores', orden: 'apellidos', sinColEstado: true,
     select: '*, centros_costo(clave, nombre)',
     columnas: [
       { t: 'Núm. empleado', v: r => r.num_empleado, clase: 'mono' },
@@ -422,6 +431,8 @@ const CATALOGOS = {
       { t: 'Jefe directo', v: r => nombreColaborador(r.jefe_id) },
       { t: 'Correo', v: r => r.email },
       { t: 'Usuario Kore', v: r => r.usuario_kore, clase: 'mono' },
+      { t: 'Tipo', v: r => TIPOS_COLAB[r.tipo_colaborador], chip: r => r.tipo_colaborador === 'JEFE_AREA' ? true : false },
+      { t: 'Estatus', v: r => r.activo ? 'Activo' : 'Baja', chip: r => r.activo ? 'ok' : 'alerta' },
     ],
     campos: [
       { k: 'nombre', t: 'Nombre(s)', req: true },
@@ -431,9 +442,13 @@ const CATALOGOS = {
         opciones: r => aux.centros.filter(x => x.activo || x.id === r.centro_costo_id).map(x => [x.id, `${x.clave} ${x.nombre}`]) },
       { k: 'area', t: 'Área', tipo: 'lista', sugerencias: () => [...new Set((datos.colaboradores || []).map(x => x.area).filter(Boolean))].sort(),
         ayuda: 'Elige una existente o escribe una nueva.' },
-      { k: 'jefe_id', t: 'Jefe directo', tipo: 'select', num: true,
-        opciones: r => aux.colaboradores.filter(x => x.id !== r.id && (x.activo || x.id === r.jefe_id))
-          .map(x => [x.id, `${x.apellidos} ${x.nombre}${x.num_empleado ? ` (${x.num_empleado})` : ''}`]) },
+      { k: 'tipo_colaborador', t: 'Tipo de colaborador', req: true, tipo: 'select', opciones: () => Object.entries(TIPOS_COLAB),
+        ayuda: 'Solo los jefes de área aparecen en el buscador de jefe directo.' },
+      { k: 'jefe_id', t: 'Jefe directo', tipo: 'buscador', num: true,
+        ayuda: 'Escribe nombre, número de empleado o área.',
+        opciones: r => aux.colaboradores
+          .filter(x => x.id !== r.id && ((x.activo && x.tipo_colaborador === 'JEFE_AREA') || x.id === r.jefe_id))
+          .map(x => [x.id, `${x.nombre} ${x.apellidos}`, [x.area, x.num_empleado && `Núm. ${x.num_empleado}`].filter(Boolean).join(' · ')]) },
       { k: 'email', t: 'Correo electrónico', tipo: 'email' },
       { k: 'usuario_kore', t: 'Usuario Kore' },
     ],
@@ -664,7 +679,7 @@ async function cargarAux() {
   ultimaCarga = rad?.[0] || null;
   const [cc, co] = await Promise.all([
     sb.from('centros_costo').select('id,clave,nombre,activo').order('clave'),
-    sb.from('colaboradores').select('id,nombre,apellidos,num_empleado,activo').order('apellidos'),
+    sb.from('colaboradores').select('id,nombre,apellidos,num_empleado,area,activo,tipo_colaborador').order('nombre'),
   ]);
   aux.centros = cc.data || [];
   aux.colaboradores = co.data || [];
@@ -831,13 +846,13 @@ function pintarTabla() {
           const cont = chip && v ? `<span class="chip${chip === 'alerta' ? ' chip-alerta' : chip === 'ok' ? ' chip-ok' : ''}">${esc(v)}</span>` : esc(v);
           return `<td class="${c.clase || ''}">${cont}</td>`;
         }).join('')}
-        <td>${r.activo ? '' : '<span class="chip chip-inactivo">Inactivo</span>'}</td>
+        ${cat.sinColEstado ? '' : `<td>${r.activo ? '' : '<span class="chip chip-inactivo">Inactivo</span>'}</td>`}
       </tr>`).join('')
-    : `<tr><td colspan="${cat.columnas.length + 1 + (cat.seleccion && editable ? 1 : 0)}" class="vacio">Ningún registro coincide con los filtros.
+    : `<tr><td colspan="${cat.columnas.length + (cat.sinColEstado ? 0 : 1) + (cat.seleccion && editable ? 1 : 0)}" class="vacio">Ningún registro coincide con los filtros.
         ${hayFiltrosCol ? '<br><button class="btn btn-sec btn-chico" type="button" onclick="quitarFiltros()">Quitar filtros de columnas</button>' : ''}</td></tr>`;
 
   $('tablaWrap').innerHTML = `<table>
-    <thead><tr>${thSel}${cabeza}<th scope="col"><span style="position:absolute;left:-9999px">Estado</span></th></tr></thead>
+    <thead><tr>${thSel}${cabeza}${cat.sinColEstado ? '' : '<th scope="col"><span style="position:absolute;left:-9999px">Estado</span></th>'}</tr></thead>
     <tbody>${cuerpo}</tbody></table>`;
   const st = $('tablaWrap').querySelector('.sel-todos');
   if (st) st.indeterminate = marcadas > 0 && marcadas < filas.length;
@@ -1058,6 +1073,16 @@ function htmlCampo(c, r) {
     const ops = c.opciones(r);
     input = `<select id="${id}"${req}${desc}><option value="">${c.req ? 'Selecciona…' : 'Ninguno'}</option>
       ${ops.map(([v, t]) => `<option value="${esc(v)}" ${String(v) === String(val ?? '') ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>`;
+  } else if (c.tipo === 'buscador') {
+    const ops = c.opciones(r);
+    buscadorDatos[c.k] = ops;
+    const sel = ops.find(o => String(o[0]) === String(val ?? ''));
+    input = `<div class="buscador" data-k="${c.k}">
+      <input type="hidden" id="${id}" value="${esc(val ?? '')}">
+      <input type="text" id="${id}_txt" role="combobox" aria-expanded="false" aria-controls="${id}_ops" aria-autocomplete="list"
+        autocomplete="off" placeholder="Buscar…" value="${esc(sel ? sel[1] : '')}"${desc}>
+      <ul class="buscador-ops" id="${id}_ops" role="listbox" hidden></ul>
+    </div>`;
   } else if (c.tipo === 'lista') {
     input = `<input type="text" id="${id}" list="${id}_lista" value="${esc(val ?? '')}" autocomplete="off"${req}${desc}>
       <datalist id="${id}_lista">${c.sugerencias().map(s => `<option value="${esc(s)}">`).join('')}</datalist>`;
@@ -1070,7 +1095,52 @@ function htmlCampo(c, r) {
     const v = c.tipo === 'date' ? (val || '').slice(0, 10) : (val ?? '');
     input = `<input type="${type}" id="${id}" value="${esc(v)}"${req}${desc}${extra}${ro ? ' readonly' : ''}${c.mayus ? ' style="text-transform:uppercase"' : ''}>`;
   }
-  return `<div class="campo" id="${id}_campo"><label for="${id}">${esc(c.t)}${c.req ? '' : ' <span style="font-weight:400;color:var(--muted)">(opcional)</span>'}</label>${input}${ayuda}${err}</div>`;
+  return `<div class="campo" id="${id}_campo"><label for="${c.tipo === 'buscador' ? id + '_txt' : id}">${esc(c.t)}${c.req ? '' : ' <span style="font-weight:400;color:var(--muted)">(opcional)</span>'}</label>${input}${ayuda}${err}</div>`;
+}
+
+const buscadorDatos = {};
+const sinAcentos = t => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+function iniciarBuscadores() {
+  document.querySelectorAll('#panelCampos .buscador').forEach(caja => {
+    const k = caja.dataset.k;
+    const oculto = $(`f_${k}`), txt = $(`f_${k}_txt`), lista = $(`f_${k}_ops`);
+    let activo = -1, visibles = [];
+    const etiquetaSel = () => (buscadorDatos[k].find(o => String(o[0]) === oculto.value) || [])[1] || '';
+    const cerrar = () => { lista.hidden = true; txt.setAttribute('aria-expanded', 'false'); txt.removeAttribute('aria-activedescendant'); };
+    const pintar = () => {
+      const q = sinAcentos(txt.value.trim());
+      visibles = buscadorDatos[k].filter(o => !q || sinAcentos(o[1] + ' ' + (o[2] || '')).includes(q)).slice(0, 40);
+      activo = visibles.length ? 0 : -1;
+      lista.innerHTML = visibles.length
+        ? visibles.map((o, i) => `<li role="option" id="f_${k}_op${i}" data-i="${i}" aria-selected="${i === activo}">${esc(o[1])}${o[2] ? `<small>${esc(o[2])}</small>` : ''}</li>`).join('')
+        : '<li class="sin">No hay jefes de área que coincidan.</li>';
+      lista.hidden = false;
+      txt.setAttribute('aria-expanded', 'true');
+      if (activo >= 0) txt.setAttribute('aria-activedescendant', `f_${k}_op0`);
+    };
+    const marcar = i => {
+      activo = i;
+      lista.querySelectorAll('[role=option]').forEach((li, j) => li.setAttribute('aria-selected', j === i));
+      const li = lista.querySelector(`[data-i="${i}"]`);
+      if (li) { li.scrollIntoView?.({ block: 'nearest' }); txt.setAttribute('aria-activedescendant', li.id); }
+    };
+    const elegir = i => { const o = visibles[i]; if (!o) return; oculto.value = o[0]; txt.value = o[1]; cerrar(); };
+
+    txt.addEventListener('focus', () => { txt.select(); pintar(); });
+    txt.addEventListener('input', () => { if (!txt.value.trim()) oculto.value = ''; pintar(); });
+    txt.addEventListener('keydown', e => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); if (lista.hidden) pintar(); else marcar(Math.min(activo + 1, visibles.length - 1)); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); marcar(Math.max(activo - 1, 0)); }
+      else if (e.key === 'Enter' && !lista.hidden) { e.preventDefault(); elegir(activo); }
+      else if (e.key === 'Escape' && !lista.hidden) { e.preventDefault(); e.stopPropagation(); txt.value = etiquetaSel(); cerrar(); }
+    });
+    lista.addEventListener('mousedown', e => {
+      const li = e.target.closest('[data-i]');
+      if (li) { e.preventDefault(); elegir(Number(li.dataset.i)); }
+    });
+    txt.addEventListener('blur', () => { cerrar(); txt.value = oculto.value ? etiquetaSel() : ''; });
+  });
 }
 
 function abrir(registro) {
@@ -1080,7 +1150,7 @@ function abrir(registro) {
   $('btnCancelar').textContent = 'Cancelar';
   const cat = CATALOGOS[actual];
   editando = registro || null;
-  const r = registro || { activo: true, requiere_resguardo: true, dias_credito: 0, operador: 'TELCEL', estatus: 'ACTIVA', tipo_linea: 'TELEFONIA', condicion: 'SIN_DEFINIR' };
+  const r = registro || { activo: true, requiere_resguardo: true, dias_credito: 0, operador: 'TELCEL', estatus: 'ACTIVA', tipo_linea: 'TELEFONIA', condicion: 'SIN_DEFINIR', tipo_colaborador: 'COLABORADOR' };
   $('panelTitulo').textContent = registro ? `Editar ${cat.singular}` : cat.nuevo;
 
   let html = cat.campos.map(c => htmlCampo(c, r)).join('');
@@ -1092,6 +1162,7 @@ function abrir(registro) {
   if (esUnoMismo) html += `<p class="nota">No puedes cambiar tu propio rol ni desactivar tu cuenta.</p>`;
   $('panelCampos').innerHTML = html;
   if (esUnoMismo) $('f_rol').disabled = true;
+  iniciarBuscadores();
   $('panel').showModal();
   $('panelCampos').querySelector('input:not([readonly]):not([type=checkbox]):not([type=radio]), select')?.focus();
 }
@@ -1281,6 +1352,7 @@ const LAYOUT_COLAB = [
   { h: 'Jefe directo (núm. empleado o correo)', k: 'jefe', ancho: 34, ej: '' },
   { h: 'Correo', k: 'email', ancho: 32, ej: 'mlopez@tubosyconexiones.mx' },
   { h: 'Usuario Kore', k: 'usuario_kore', ancho: 16, ej: 'mlopez' },
+  { h: 'Tipo (Colaborador o Jefe de área)', k: 'tipo', ancho: 32, ej: 'Colaborador' },
 ];
 let cargaColab = null;
 
@@ -1296,7 +1368,8 @@ function descargarLayoutColab() {
     ['1. Captura una persona por renglón en la hoja "Colaboradores", a partir del renglón 2. No cambies los encabezados.'],
     ['2. Las columnas con * son obligatorias solo para personas nuevas. Todas las demás son opcionales y pueden ir vacías.'],
     ['3. La clave de centro de costo debe existir en el sistema. Consulta la hoja "Centros de costo".'],
-    ['4. El jefe directo se indica con su número de empleado o su correo. Puede estar en el sistema (hoja "Colaboradores actuales") o en este mismo archivo.'],
+    ['4. El jefe directo se indica con su número de empleado o su correo. Puede estar en el sistema (hoja "Jefes de área") o en este mismo archivo. Quien quede como jefe de alguien se marca solo como Jefe de área.'],
+    ['   En la columna Tipo escribe "Jefe de área" o "Colaborador". Si la dejas vacía, una persona nueva queda como Colaborador.'],
     ['5. Si la persona ya existe (se busca por núm. de empleado, luego por correo, luego por usuario Kore), solo se actualizan las columnas que llenes; las vacías conservan lo que ya tenía.'],
     ['6. Al subirlo, el sistema revisa todo primero. Si hay errores te dice en qué renglón y no guarda nada hasta que los corrijas.'],
     [''],
@@ -1312,11 +1385,11 @@ function descargarLayoutColab() {
   cc['!cols'] = [{ wch: 16 }, { wch: 40 }];
   XLSX.utils.book_append_sheet(wb, cc, 'Centros de costo');
 
-  const act = (datos.colaboradores || []).filter(x => x.activo);
+  const jefes = (datos.colaboradores || []).filter(x => x.activo && x.tipo_colaborador === 'JEFE_AREA');
   const co = XLSX.utils.aoa_to_sheet([['Núm. empleado', 'Nombre', 'Correo', 'Área'],
-    ...act.map(x => [x.num_empleado || '', `${x.nombre} ${x.apellidos}`, x.email || '', x.area || ''])]);
+    ...jefes.map(x => [x.num_empleado || '', `${x.nombre} ${x.apellidos}`, x.email || '', x.area || ''])]);
   co['!cols'] = [{ wch: 15 }, { wch: 34 }, { wch: 32 }, { wch: 20 }];
-  XLSX.utils.book_append_sheet(wb, co, 'Colaboradores actuales');
+  XLSX.utils.book_append_sheet(wb, co, 'Jefes de área');
 
   XLSX.writeFile(wb, 'layout_colaboradores.xlsx');
 }
@@ -1324,6 +1397,7 @@ function descargarLayoutColab() {
 const normalizarEncabezado = t => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\*/g, '').trim();
 function columnaDeEncabezado(t) {
   const n = normalizarEncabezado(t);
+  if (n.startsWith('tipo')) return 'tipo';
   if (n.startsWith('nombre')) return 'nombre';
   if (n.startsWith('apellido')) return 'apellidos';
   if (n.startsWith('num') || n.includes('empleado') && !n.startsWith('jefe')) return 'num_empleado';
