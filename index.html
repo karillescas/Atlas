@@ -369,11 +369,14 @@ const REGIMENES = [
 ];
 
 const CONTROLES = {
-  SERIE:    { etiqueta: 'Por número de serie', ayuda: 'Cada pieza se registra y se resguarda individualmente (laptop, monitor).' },
+  SERIE:    { etiqueta: 'Por número de serie', ayuda: 'Un renglón por pieza, con serie obligatoria (laptop, monitor).' },
   IMEI:     { etiqueta: 'Por serie e IMEI',    ayuda: 'Igual que por serie, además exige IMEI (celular, módem).' },
-  CANTIDAD: { etiqueta: 'Por cantidad',        ayuda: 'Se maneja como existencia, sin identificar piezas (tóner, teclado).' },
+  PIEZA:    { etiqueta: 'Por pieza, sin serie', ayuda: 'Un renglón por pieza para poder asignarla y resguardarla; la serie es opcional (teclado, mouse, diadema).' },
+  CANTIDAD: { etiqueta: 'Por cantidad',        ayuda: 'Un solo renglón con la existencia, sin identificar piezas (tóner, cables, materiales).' },
 };
-const controlDe = r => r.requiere_imei ? 'IMEI' : (r.requiere_serie ? 'SERIE' : 'CANTIDAD');
+const controlDe = r => r.requiere_imei ? 'IMEI' : r.requiere_serie ? 'SERIE' : r.es_consumible ? 'CANTIDAD' : 'PIEZA';
+// Un renglón por pieza: todo lo que no se maneja por cantidad
+const porPieza = t => !!t && !t.es_consumible;
 
 const specsATexto = o => Object.entries(o || {}).map(([k, v]) => `${k}: ${v}`).join('\n');
 const textoASpecs = t => {
@@ -503,7 +506,7 @@ const CATALOGOS = {
       const e = {}, t = tipoPorId(p.tipo_id);
       if (t?.requiere_serie && !p.num_serie) e.num_serie = 'Este tipo de equipo requiere número de serie.';
       if (t?.requiere_imei && !p.imei) e.imei = 'Este tipo de equipo requiere IMEI.';
-      if (t?.requiere_serie && p.cantidad !== 1) e.cantidad = 'Los equipos con serie se registran de uno en uno (cantidad 1).';
+      if (porPieza(t) && p.cantidad !== 1) e.cantidad = 'Este tipo se registra de uno en uno (cantidad 1). Para manejarlo por cantidad, cambia su control en Tipos de equipo.';
       if (p.estatus === 'BAJA' && !p.motivo_baja_id) e.motivo_baja_id = 'Indica el motivo de la baja.';
       if (p.estatus === 'BAJA' && !p.fecha_baja) e.fecha_baja = 'Indica la fecha de la baja.';
       return e;
@@ -1347,7 +1350,7 @@ function leerFormulario(cat) {
     if (c.soloLectura) continue;
     if (c.tipo === 'control') {
       const ctrl = document.querySelector('input[name=control]:checked').value;
-      payload.requiere_serie = ctrl !== 'CANTIDAD';
+      payload.requiere_serie = ctrl === 'SERIE' || ctrl === 'IMEI';
       payload.requiere_imei = ctrl === 'IMEI';
       payload.es_consumible = ctrl === 'CANTIDAD';
       continue;
@@ -1678,7 +1681,7 @@ function esEnvio(clave, desc) {
   return /^7810/.test(clave || '') || /(env[ií]o|flete|paqueter[ií]a|mensajer[ií]a|shipping|gastos de entrega|costo de entrega)/i.test(desc || '');
 }
 function esMaterial(desc) {
-  return /(tarjeta madre|motherboard|board|procesador|\bcpu\b|memoria ram|\bram\b|\bddr\d|disco duro|\bssd\b|\bhdd\b|\bnvme\b|gabinete|fuente de poder|tarjeta de video|disipador)/i.test(desc || '');
+  return /(tarjeta madre|motherboard|mainboard|procesador|\bcpu\b|memoria|\bram\b|\bddr\d|\bdimm\b|disco|estado s[oó]lido|\bssd\b|\bhdd\b|\bnvme\b|\bm\.2\b|gabinete|fuente de (poder|alimentaci[oó]n)|tarjeta de video|tarjeta gr[aá]fica|\bgpu\b|disipador|ventilador|cooler|pasta t[eé]rmica|tarjeta de red|antena wi-?fi)/i.test(desc || '');
 }
 function detectarSeries(desc) {
   const res = [];
@@ -1781,6 +1784,11 @@ function abrirCompra(origen) {
 
 const PASOS = ['Archivo', 'Conceptos', 'Armado', 'Confirmar'];
 function hayMateriales() { return compra?.conceptos.some(c => c.rol === 'MATERIAL'); }
+// Se puede armar con cualquier concepto que no vaya pieza por pieza con serie
+function usables() {
+  return compra.conceptos.filter(c => c.rol === 'MATERIAL' || (c.rol === 'EQUIPO' && !tipoPorId(c.tipo_id)?.requiere_serie));
+}
+const usadoEnArmado = c => compra.armar.si ? aNum(compra.armar.n) * aNum(compra.armar.por[c.i]) : 0;
 
 function calcularCompra() {
   const cs = compra.conceptos;
@@ -1803,7 +1811,7 @@ function calcularCompra() {
   });
   const a = compra.armar;
   a.costoSin = 0; a.costoCon = 0;
-  cs.filter(c => c.rol === 'MATERIAL').forEach(c => {
+  usables().forEach(c => {
     const p = aNum(a.por[c.i]);
     a.costoSin += p * (c.unitSin || 0);
     a.costoCon += p * (c.unitCon || 0);
@@ -1838,7 +1846,7 @@ function campoTxt(attrs, etiqueta, valor, extra = '') {
 function pintarCompra(errores = []) {
   const cuerpo = $('panelCampos');
   const scroll = cuerpo.parentElement.scrollTop;
-  const pasos = PASOS.map((p, i) => (i === 2 && compra && !hayMateriales()) ? '' :
+  const pasos = PASOS.map((p, i) =>
     `<span class="${i + 1 === pasoCompra ? 'actual' : ''}">${i + 1}. ${p}</span>`).join('');
   $('panelTitulo').textContent = compra?.origen === 'REMISION' ? 'Registrar remisión' : 'Cargar factura XML';
   let html = `<div class="pasos">${pasos}</div>`;
@@ -1927,6 +1935,13 @@ function tarjetaConcepto(c) {
       ${campoSel(`data-c="${c.i}" data-f="centro_costo_id"`, 'Centro de costo', optCentros(), c.centro_costo_id, 'Igual que la compra')}
       ${c.rol === 'EQUIPO' ? campoTxt(`type="number" min="0" step="0.01" data-c="${c.i}" data-f="precio_empleado"`, 'Precio empleado (c/u)', c.precio_empleado) : ''}
     </div>`;
+    if (c.rol === 'EQUIPO' && porPieza(t) && !t.requiere_serie) {
+      cuerpo += `<div class="rejilla" style="margin-top:.6rem">
+        <label class="campo"><span class="etq">Números de serie (opcional) <span class="ayuda" data-calc="nser-${c.i}"></span></span>
+          <textarea data-c="${c.i}" data-f="series" placeholder="Si las piezas traen serie, una por renglón">${esc(c.series)}</textarea></label>
+      </div>
+      <p class="nota" style="margin:.4rem 0 0">Se registra un renglón por pieza (${aNum(c.cantidad)}).</p>`;
+    }
     if (c.rol === 'EQUIPO' && t?.requiere_serie) {
       cuerpo += `<div class="rejilla" style="margin-top:.6rem">
         <label class="campo"><span class="etq">Números de serie <span class="ayuda" data-calc="nser-${c.i}"></span></span>
@@ -1967,9 +1982,10 @@ function pasoConceptos() {
 
 function pasoArmado() {
   const a = compra.armar;
-  const mats = compra.conceptos.filter(c => c.rol === 'MATERIAL');
+  const mats = usables();
   const t = tipoPorId(a.tipo_id);
-  let html = `<p class="paso">Esta compra tiene materiales. ¿Deseas armar equipos con ellos?</p>
+  const conSerie = compra.conceptos.filter(c => c.rol === 'EQUIPO' && tipoPorId(c.tipo_id)?.requiere_serie);
+  let html = `<p class="paso">${hayMateriales() ? 'Esta compra tiene materiales.' : 'Si con algo de esta compra vas a armar equipos, indícalo aquí.'} ¿Deseas armar equipos?</p>
     <div class="rejilla" style="margin-bottom:1rem">
       <label class="opcion"><input type="radio" name="armarSi" data-a="si" value="1" ${a.si === true ? 'checked' : ''}> <span>Sí, armar equipos</span></label>
       <label class="opcion"><input type="radio" name="armarSi" data-a="si" value="0" ${a.si === false ? 'checked' : ''}> <span>No, dejar todo en stock como materiales</span></label>
@@ -1986,13 +2002,14 @@ function pasoArmado() {
     </div>
     <h3 style="margin:1.25rem 0 .5rem;font-size:1rem">Materiales que lleva cada equipo</h3>
     <div class="tabla-wrap"><table>
-      <thead><tr><th>Material</th><th>Disponible</th><th>Por equipo</th><th>Se usan</th><th>Sobran</th><th>Costo unitario</th></tr></thead>
+      <thead><tr><th>Concepto de la factura</th><th>Comprados</th><th>Por equipo</th><th>Se usan</th><th>Quedan en equipos</th><th>Costo unitario</th></tr></thead>
       <tbody>${mats.map(c => `<tr>
         <td>${esc(c.descripcion)}</td><td class="mono">${c.cantidad}</td>
         <td><input type="number" min="0" step="1" style="width:6rem" data-a="por" data-m="${c.i}" value="${esc(a.por[c.i] ?? '')}" aria-label="Cantidad por equipo de ${esc(c.descripcion)}"></td>
         <td class="mono" data-calc="usa-${c.i}"></td><td class="mono" data-calc="sobra-${c.i}"></td>
         <td class="mono">${fmtMoneda(c.unitSin)}</td></tr>`).join('')}</tbody>
     </table></div>
+    ${conSerie.length ? `<p class="nota" style="margin:.6rem 0 0">No aparecen aquí ${conSerie.map(c => `"${esc(c.descripcion.slice(0, 40))}"`).join(', ')} porque su tipo se controla por número de serie. Si son piezas para armar, regresa y márcalos como "Material para armar".</p>` : ''}
     ${t?.requiere_serie ? `<div class="rejilla" style="margin-top:1rem">
       <label class="campo"><span class="etq">Números de serie de los equipos armados <span class="ayuda" data-calc="aser"></span></span>
         <textarea data-a="series" placeholder="Una serie por renglón">${esc(a.series)}</textarea></label>
@@ -2020,13 +2037,17 @@ function construirPayload() {
     if (c.rol === 'EQUIPO') {
       const t = tipoPorId(c.tipo_id);
       base.precio_empleado = c.precio_empleado === '' ? null : aNum(c.precio_empleado);
-      if (t?.requiere_serie) {
+      if (porPieza(t)) {
         const s = renglones(c.series), im = renglones(c.imeis);
-        for (let j = 0; j < aNum(c.cantidad); j++)
+        const piezas = aNum(c.cantidad) - (t.requiere_serie ? 0 : usadoEnArmado(c));
+        for (let j = 0; j < piezas; j++)
           equipos.push({ ...base, cantidad: 1, num_serie: s[j] || null, imei: t.requiere_imei ? (im[j] || null) : null });
-      } else equipos.push({ ...base, cantidad: aNum(c.cantidad) });
+      } else {
+        const quedan = aNum(c.cantidad) - usadoEnArmado(c);
+        if (quedan > 0) equipos.push({ ...base, cantidad: quedan });
+      }
     } else if (c.rol === 'MATERIAL') {
-      const sobra = aNum(c.cantidad) - (a.si ? aNum(a.n) * aNum(a.por[c.i]) : 0);
+      const sobra = aNum(c.cantidad) - usadoEnArmado(c);
       if (sobra > 0) equipos.push({ ...base, cantidad: sobra, es_material: true });
     }
   });
@@ -2034,7 +2055,7 @@ function construirPayload() {
   if (a.si) {
     const t = tipoPorId(a.tipo_id);
     const s = renglones(a.series), im = renglones(a.imeis);
-    const componentes = k.conceptos.filter(c => c.rol === 'MATERIAL' && aNum(a.por[c.i]) > 0).map(c => ({
+    const componentes = usables().filter(c => aNum(a.por[c.i]) > 0).map(c => ({
       descripcion: c.descripcion, tipo_id: c.tipo_id || null, marca_id: c.marca_id || null, cantidad: aNum(a.por[c.i]),
       costo_unit_sin_iva: Math.round(c.unitSin * 10000) / 10000, costo_unit_con_iva: Math.round(c.unitCon * 10000) / 10000,
     }));
@@ -2057,8 +2078,9 @@ function construirPayload() {
 
 function pasoResumen() {
   const p = construirPayload();
-  const conSerie = p.equipos.filter(e => !e.es_material && e.cantidad === 1 && tipoPorId(e.tipo_id)?.requiere_serie).length;
-  const porCant = p.equipos.filter(e => !e.es_material && !tipoPorId(e.tipo_id)?.requiere_serie);
+  const conSerie = p.equipos.filter(e => !e.es_material && tipoPorId(e.tipo_id)?.requiere_serie).length;
+  const sueltas = p.equipos.filter(e => !e.es_material && porPieza(tipoPorId(e.tipo_id)) && !tipoPorId(e.tipo_id)?.requiere_serie).length;
+  const porCant = p.equipos.filter(e => !e.es_material && !porPieza(tipoPorId(e.tipo_id)));
   const mats = p.equipos.filter(e => e.es_material);
   const sinSerie = p.equipos.filter(e => tipoPorId(e.tipo_id)?.requiere_serie && !e.num_serie).length
     + p.armados.filter(e => tipoPorId(e.tipo_id)?.requiere_serie && !e.num_serie).length;
@@ -2067,6 +2089,7 @@ function pasoResumen() {
   return cabeceraCompraResumen() + `
     <div class="cifras">
       <div><strong>${conSerie}</strong><span>equipos con serie</span></div>
+      <div><strong>${sueltas}</strong><span>piezas individuales sin serie obligatoria</span></div>
       <div><strong>${porCant.reduce((s, e) => s + e.cantidad, 0)}</strong><span>piezas por cantidad (${porCant.length} renglones)</span></div>
       <div><strong>${p.armados.length}</strong><span>equipos armados</span></div>
       <div><strong>${mats.reduce((s, e) => s + e.cantidad, 0)}</strong><span>materiales sobrantes a stock</span></div>
@@ -2076,6 +2099,8 @@ function pasoResumen() {
       <div><span>Valor registrado con IVA</span><strong>${fmtMoneda(valorCon)}</strong></div>
       <div><span>Envío repartido</span><strong>${fmtMoneda(p.envio)}</strong></div>
     </div>
+    ${compra.armar.si ? `<p class="paso"><strong>Se usan para armar:</strong> ${usables().filter(c => usadoEnArmado(c) > 0)
+        .map(c => `${usadoEnArmado(c)} de ${c.cantidad} ${esc(c.descripcion.slice(0, 45))}`).join('; ')}. Esas piezas no se registran sueltas; quedan como componentes de cada equipo armado.</p>` : ''}
     ${sinSerie ? `<p class="nota">${sinSerie} equipo(s) quedarán sin número de serie para capturarlo después.</p>` : ''}
     <p class="paso">Al guardar se registra todo junto. Si algo falla, no se guarda nada.</p>`;
 }
@@ -2099,7 +2124,7 @@ function pintarCalculosCompra() {
       (c.parteEnvio ? ` (incluye ${fmtMoneda(c.parteEnvio / (aNum(c.cantidad) || 1))} de envío por pieza)` : ''));
     set(`nser-${c.i}`, `(${renglones(c.series).length} de ${aNum(c.cantidad)})`);
     set(`nimei-${c.i}`, `(${renglones(c.imeis).length} de ${aNum(c.cantidad)})`);
-    const usa = compra.armar.si ? aNum(compra.armar.n) * aNum(compra.armar.por[c.i]) : 0;
+    const usa = usadoEnArmado(c);
     set(`usa-${c.i}`, usa);
     set(`sobra-${c.i}`, aNum(c.cantidad) - usa);
   });
@@ -2134,6 +2159,11 @@ function validarPaso() {
       const t = tipoPorId(c.tipo_id);
       if (!t) { err.push(`${nom}: elige el tipo.`); return; }
       if (!esEntero(c.cantidad)) err.push(`${nom}: la cantidad (${c.cantidad}) debe ser un número entero para registrarla en inventario.`);
+      if (c.rol === 'EQUIPO' && porPieza(t) && !t.requiere_serie) {
+        const s = renglones(c.series);
+        if (s.length > aNum(c.cantidad)) err.push(`${nom}: hay más series (${s.length}) que piezas (${c.cantidad}).`);
+        todasSeries.push(...s.map(x => x.toUpperCase()));
+      }
       if (c.rol === 'EQUIPO' && t.requiere_serie) {
         const s = renglones(c.series), im = renglones(c.imeis);
         if (!c.despues && s.length !== aNum(c.cantidad)) err.push(`${nom}: capturaste ${s.length} series y son ${c.cantidad} piezas.`);
@@ -2159,7 +2189,7 @@ function validarPaso() {
       if (!esEntero(a.n)) err.push('Indica cuántos equipos vas a armar.');
       const t = tipoPorId(a.tipo_id);
       if (!t) err.push('Elige el tipo de equipo resultante.');
-      const mats = k.conceptos.filter(c => c.rol === 'MATERIAL');
+      const mats = usables();
       if (!mats.some(c => aNum(a.por[c.i]) > 0)) err.push('Indica qué materiales lleva cada equipo.');
       mats.forEach(c => {
         const p = a.por[c.i];
@@ -2177,13 +2207,13 @@ async function avanzarCompra() {
   if (pasoCompra === 4) { await guardarCompra(); return; }
   const err = validarPaso();
   if (err.length) { pintarCompra(err); return; }
-  pasoCompra = pasoCompra === 2 && !hayMateriales() ? 4 : pasoCompra + 1;
-  if (pasoCompra === 4 && !hayMateriales()) compra.armar.si = false;
+  if (pasoCompra === 2 && compra.armar.si === null && !hayMateriales()) compra.armar.si = false;
+  pasoCompra += 1;
   pintarCompra();
   $('panelCampos').parentElement.scrollTop = 0;
 }
 function retrocederCompra() {
-  pasoCompra = pasoCompra === 4 && !hayMateriales() ? 2 : pasoCompra - 1;
+  pasoCompra -= 1;
   pintarCompra();
 }
 
