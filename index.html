@@ -397,6 +397,57 @@ const CATALOGOS = {
     ],
   },
 
+  colaboradores: {
+    grupo: 'Personal',
+    titulo: 'Colaboradores', singular: 'colaborador', nuevo: 'Nuevo colaborador',
+    descripcion: 'Personas a las que se asignan líneas y equipos. No necesitan cuenta en este sistema.',
+    ayudaActivo: 'Desmárcalo cuando la persona deje de laborar. Su historial se conserva.',
+    tabla: 'colaboradores', orden: 'apellidos',
+    select: '*, centros_costo(clave, nombre), jefe:colaboradores!jefe_id(nombre, apellidos)',
+    columnas: [
+      { t: 'Núm. empleado', v: r => r.num_empleado, clase: 'mono' },
+      { t: 'Nombre', v: r => `${r.nombre} ${r.apellidos}` },
+      { t: 'Área', v: r => r.area },
+      { t: 'Centro de costo', v: r => r.centros_costo ? `${r.centros_costo.clave} ${r.centros_costo.nombre}` : '' },
+      { t: 'Jefe directo', v: r => r.jefe ? `${r.jefe.nombre} ${r.jefe.apellidos}` : '' },
+      { t: 'Correo', v: r => r.email },
+      { t: 'Usuario Kore', v: r => r.usuario_kore, clase: 'mono' },
+    ],
+    campos: [
+      { k: 'nombre', t: 'Nombre(s)', req: true },
+      { k: 'apellidos', t: 'Apellidos', req: true },
+      { k: 'num_empleado', t: 'Número de empleado', mayus: true },
+      { k: 'centro_costo_id', t: 'Centro de costo', req: true, tipo: 'select', num: true,
+        opciones: r => aux.centros.filter(x => x.activo || x.id === r.centro_costo_id).map(x => [x.id, `${x.clave} ${x.nombre}`]) },
+      { k: 'area', t: 'Área', tipo: 'lista', sugerencias: () => [...new Set((datos.colaboradores || []).map(x => x.area).filter(Boolean))].sort(),
+        ayuda: 'Elige una existente o escribe una nueva.' },
+      { k: 'jefe_id', t: 'Jefe directo', tipo: 'select', num: true,
+        opciones: r => aux.colaboradores.filter(x => x.id !== r.id && (x.activo || x.id === r.jefe_id))
+          .map(x => [x.id, `${x.apellidos} ${x.nombre}${x.num_empleado ? ` (${x.num_empleado})` : ''}`]) },
+      { k: 'email', t: 'Correo electrónico', tipo: 'email' },
+      { k: 'usuario_kore', t: 'Usuario Kore' },
+    ],
+  },
+
+  centros: {
+    grupo: 'Configuración',
+    titulo: 'Centros de costo', singular: 'centro de costo', nuevo: 'Nuevo centro de costo',
+    descripcion: 'Sucursales, almacenes o áreas a las que se cargan los equipos y las líneas.',
+    tabla: 'centros_costo', select: '*', orden: 'clave',
+    columnas: [
+      { t: 'Clave', v: r => r.clave, clase: 'mono' },
+      { t: 'Nombre', v: r => r.nombre },
+      { t: 'Dirección', v: r => r.direccion },
+      { t: 'C.P.', v: r => r.codigo_postal, clase: 'mono' },
+    ],
+    campos: [
+      { k: 'clave', t: 'Clave', req: true, mayus: true, ayuda: 'La misma clave que usan en Kore o en Contabilidad.' },
+      { k: 'nombre', t: 'Nombre', req: true },
+      { k: 'direccion', t: 'Dirección', tipo: 'textarea' },
+      { k: 'codigo_postal', t: 'Código postal', patron: /^\d{5}$/, msgPatron: 'Deben ser 5 dígitos.' },
+    ],
+  },
+
   proveedores: {
     grupo: 'Configuración',
     titulo: 'Proveedores', singular: 'proveedor', nuevo: 'Nuevo proveedor',
@@ -503,7 +554,7 @@ let actual = 'lineas';
 let ultimaCarga = null;
 let editando = null;
 const datos = {};
-const aux = { marcas: [], tipos: [] };
+const aux = { marcas: [], tipos: [], centros: [], colaboradores: [] };
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -596,12 +647,28 @@ async function cargarAux() {
   ]);
   const { data: rad } = await sb.from('radiografias').select('*').order('created_at', { ascending: false }).limit(1);
   ultimaCarga = rad?.[0] || null;
+  const [cc, co] = await Promise.all([
+    sb.from('centros_costo').select('id,clave,nombre,activo').order('clave'),
+    sb.from('colaboradores').select('id,nombre,apellidos,num_empleado,activo').order('apellidos'),
+  ]);
+  aux.centros = cc.data || [];
+  aux.colaboradores = co.data || [];
   aux.marcas = m.data || [];
   aux.tipos = t.data || [];
 }
 
 function traducirError(err) {
   if (!err) return '';
+  const m = err.message || '';
+  const especificos = {
+    ux_colab_num_empleado: 'Ya existe un colaborador con ese número de empleado.',
+    ux_colab_email: 'Ya existe un colaborador con ese correo.',
+    ux_colab_usuario_kore: 'Ya existe un colaborador con ese usuario de Kore.',
+    ux_centros_clave: 'Ya existe un centro de costo con esa clave.',
+    ck_colab_jefe_distinto: 'Una persona no puede ser su propio jefe directo.',
+    ck_colab_email: 'El correo no tiene un formato válido.',
+  };
+  for (const [k, txt] of Object.entries(especificos)) if (m.includes(k)) return txt;
   switch (err.code) {
     case '23505': return 'Ya existe un registro con ese valor.';
     case '23514': return 'Algún dato no cumple las reglas del catálogo. Revisa el formato.';
@@ -970,9 +1037,12 @@ function htmlCampo(c, r) {
   }
   let input;
   if (c.tipo === 'select') {
-    const ops = c.opciones();
-    input = `<select id="${id}"${req}${desc}><option value="">Selecciona…</option>
+    const ops = c.opciones(r);
+    input = `<select id="${id}"${req}${desc}><option value="">${c.req ? 'Selecciona…' : 'Ninguno'}</option>
       ${ops.map(([v, t]) => `<option value="${esc(v)}" ${String(v) === String(val ?? '') ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>`;
+  } else if (c.tipo === 'lista') {
+    input = `<input type="text" id="${id}" list="${id}_lista" value="${esc(val ?? '')}" autocomplete="off"${req}${desc}>
+      <datalist id="${id}_lista">${c.sugerencias().map(s => `<option value="${esc(s)}">`).join('')}</datalist>`;
   } else if (c.tipo === 'textarea' || c.tipo === 'specs') {
     const t = c.tipo === 'specs' ? specsATexto(val) : (val ?? '');
     input = `<textarea id="${id}"${desc}>${esc(t)}</textarea>`;
@@ -999,7 +1069,7 @@ function abrir(registro) {
   const esUnoMismo = actual === 'usuarios' && registro && registro.id === perfil.id;
   if (registro && !esUnoMismo && !cat.sinActivo) {
     html += `<div class="campo"><label class="opcion"><input type="checkbox" id="f_activo" ${r.activo ? 'checked' : ''}>
-      <span>Activo<small>Los registros inactivos no aparecen para nuevas altas, pero conservan su historial.</small></span></label></div>`;
+      <span>Activo<small>${esc(cat.ayudaActivo || 'Los registros inactivos no aparecen para nuevas altas, pero conservan su historial.')}</small></span></label></div>`;
   }
   if (esUnoMismo) html += `<p class="nota">No puedes cambiar tu propio rol ni desactivar tu cuenta.</p>`;
   $('panelCampos').innerHTML = html;
@@ -1077,7 +1147,7 @@ $('formRegistro').addEventListener('submit', async e => {
   toast(`${nombre} ${editando ? (fem ? 'actualizada' : 'actualizado') : (fem ? 'guardada' : 'guardado')}.`);
   cerrarPanel();
   await cargar(actual);
-  if (actual === 'marcas' || actual === 'tipos') await cargarAux();
+  if (['marcas', 'tipos', 'centros', 'colaboradores'].includes(actual)) await cargarAux();
   mostrar(actual);
 });
 
