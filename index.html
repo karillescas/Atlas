@@ -123,6 +123,16 @@ fieldset.campo { border: 1px solid var(--line); border-radius: 6px; padding: .7r
 .th-btn.activo { color: var(--accent); }
 .th-ico { display: inline-flex; width: 14px; height: 14px; }
 .th-ico svg { width: 14px; height: 14px; }
+.col-sel { width: 2.5rem; }
+.col-sel input { width: 1.05rem; height: 1.05rem; cursor: pointer; }
+tr.seleccionada td { background: var(--accent-soft); }
+.barra-sel { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; background: var(--rail); color: var(--rail-ink);
+  border-radius: 8px; padding: .6rem .9rem; margin-bottom: 1rem; }
+.barra-sel .btn-sec { color: var(--rail-ink); border-color: rgba(255,255,255,.3); }
+.barra-sel .btn-link { color: var(--rail-ink); margin-left: auto; }
+.chip-ok { background: #DCEFE0; color: #1E5B2C; }
+:root[data-theme="dark"] .chip-ok { background: #1C3A24; color: #9ED8AC; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .chip-ok { background: #1C3A24; color: #9ED8AC; } }
 .conteo { align-self: center; color: var(--muted); font-size: .88rem; white-space: nowrap; }
 .pop { position: fixed; z-index: 20; width: min(300px, calc(100vw - 16px)); background: var(--panel); color: var(--ink);
   border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 10px 28px rgba(0, 0, 0, .18); display: flex; flex-direction: column; overflow: hidden; }
@@ -263,6 +273,7 @@ dialog.panel form { display: flex; flex-direction: column; height: 100%; }
       </select>
     </div>
     <p class="nota" id="nota" hidden></p>
+    <div class="barra-sel" id="barraSel" hidden></div>
     <div class="tabla-wrap" id="tablaWrap"></div>
   </main>
 </div>
@@ -334,6 +345,7 @@ const textoASpecs = t => {
 };
 
 const TIPOS_LINEA = { TELEFONIA: 'Telefonía', INTERNET: 'Internet', GPS: 'GPS' };
+const CONDICION_LINEA = { DISPONIBLE: 'Disponible', ASIGNADA: 'Asignada', SIN_DEFINIR: 'Sin definir' };
 const ESTATUS_LINEA = { ACTIVA: 'Activa', NO_EN_RADIOGRAFIA: 'No vino en la radiografía', BAJA: 'Baja' };
 const fmtFecha = d => d ? d.slice(0, 10).split('-').reverse().join('/') : '';
 const fmtMoneda = n => n == null ? '' : Number(n).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
@@ -345,13 +357,18 @@ const CATALOGOS = {
     descripcion: 'Líneas de telefonía, internet y GPS. Se actualizan cargando la radiografía de Telcel.',
     tabla: 'lineas', select: '*', orden: 'telefono',
     accion: { texto: 'Cargar radiografía', fn: () => abrirCarga() },
+    seleccion: { campo: 'condicion', titulo: 'Cambiar condición a', opciones: CONDICION_LINEA },
     resumen: filas => {
       const act = filas.filter(r => r.estatus !== 'BAJA');
       const por = t => act.filter(r => r.tipo_linea === t).length;
       const renta = act.reduce((s, r) => s + Number(r.renta_mensual || 0), 0);
       const revisar = act.filter(r => r.estatus === 'NO_EN_RADIOGRAFIA').length;
+      const disp = act.filter(r => r.estatus === 'ACTIVA' && r.condicion === 'DISPONIBLE').length;
+      const sinDef = act.filter(r => r.condicion === 'SIN_DEFINIR').length;
       return [`${act.length} líneas`, `${por('TELEFONIA')} telefonía`, `${por('GPS')} GPS`, `${por('INTERNET')} internet`,
               `Renta mensual ${fmtMoneda(renta)}`, ultimaCarga ? `Última radiografía: ${fmtFecha(ultimaCarga.fecha_corte)}` : 'Sin radiografías cargadas']
+             .concat([`${disp} disponibles`])
+             .concat(sinDef ? [`${sinDef} sin condición definida`] : [])
              .concat(revisar ? [`${revisar} por revisar`] : []);
     },
     columnas: [
@@ -363,6 +380,7 @@ const CATALOGOS = {
       { t: 'Fin de plazo', v: r => fmtFecha(r.fecha_fin_servicio), ord: r => r.fecha_fin_servicio, clase: 'mono' },
       { t: 'Equipo según Telcel', v: r => r.equipo_radiografia },
       { t: 'Estatus', v: r => ESTATUS_LINEA[r.estatus], chip: r => r.estatus === 'ACTIVA' ? true : 'alerta' },
+      { t: 'Condición', v: r => CONDICION_LINEA[r.condicion], chip: r => r.condicion === 'DISPONIBLE' ? 'ok' : r.condicion === 'ASIGNADA' ? true : 'alerta' },
     ],
     campos: [
       { k: 'telefono', t: 'Teléfono', req: true, soloLecturaEditar: true, patron: /^\d{10}$/, msgPatron: 'Deben ser 10 dígitos, sin espacios.' },
@@ -373,6 +391,7 @@ const CATALOGOS = {
       { k: 'renta_mensual', t: 'Renta mensual con IVA', tipo: 'decimal' },
       { k: 'tipo_esquema', t: 'Esquema', tipo: 'select', opciones: () => [['Libre', 'Libre'], ['Plazo Forzoso con Equipo', 'Plazo forzoso con equipo']] },
       { k: 'fecha_fin_servicio', t: 'Fin de plazo forzoso', tipo: 'date' },
+      { k: 'condicion', t: 'Condición', req: true, tipo: 'select', opciones: () => Object.entries(CONDICION_LINEA), ayuda: 'Disponible: puedes entregarla. Asignada: alguien la tiene.' },
       { k: 'estatus', t: 'Estatus', req: true, tipo: 'select', opciones: () => Object.entries(ESTATUS_LINEA), ayuda: 'Marca Baja cuando la línea se cancele con el operador.' },
       { k: 'notas', t: 'Notas', tipo: 'textarea' },
     ],
@@ -613,6 +632,7 @@ $('nav').addEventListener('click', e => {
 
 function mostrar(key) {
   cerrarPop();
+  if (key !== actual) seleccion.clear();
   actual = key;
   const cat = CATALOGOS[key];
   pintarNav();
@@ -640,6 +660,7 @@ $('btnAccion').addEventListener('click', () => CATALOGOS[actual].accion?.fn());
 $('filtroExtra').addEventListener('change', () => pintarTabla());
 
 /* ---------- Filtros por columna (tipo Excel) ---------- */
+const seleccion = new Set();   // ids seleccionados en el catálogo actual
 const filtrosCol = {};   // por catálogo: { índiceColumna: Set(valores permitidos) }
 const ordenCol = {};     // por catálogo: { idx, dir: 1 | -1 }
 const VACIO = '(Vacías)';
@@ -708,23 +729,75 @@ function pintarTabla() {
         aria-label="${esc(c.t)}: filtrar y ordenar${estado ? ` (${estado})` : ''}">${esc(c.t)}<span class="th-ico" aria-hidden="true">${ico}</span></button></th>`;
   }).join('');
 
+  const conSel = !!cat.seleccion && editable;
+  const visiblesIds = filas.map(r => String(r.id));
+  [...seleccion].forEach(id => { if (!visiblesIds.includes(id)) seleccion.delete(id); });   // solo lo que se ve
+  const marcadas = visiblesIds.filter(id => seleccion.has(id)).length;
+  const thSel = conSel ? `<th scope="col" class="col-sel"><input type="checkbox" class="sel-todos" aria-label="Seleccionar las ${filas.length} filas mostradas"
+      ${marcadas && marcadas === filas.length ? 'checked' : ''}></th>` : '';
+  pintarBarraSel(cat);
+
   const cuerpo = filas.length ? filas.map(r => `
-      <tr class="${editable ? 'editable' : ''} ${r.activo ? '' : 'inactivo'}" data-id="${esc(r.id)}" ${editable ? 'tabindex="0"' : ''}>
+      <tr class="${editable ? 'editable' : ''} ${r.activo ? '' : 'inactivo'} ${seleccion.has(String(r.id)) ? 'seleccionada' : ''}" data-id="${esc(r.id)}" ${editable ? 'tabindex="0"' : ''}>
+        ${conSel ? `<td class="col-sel"><input type="checkbox" class="sel-fila" aria-label="Seleccionar ${esc(cat.columnas[0].v(r))}" ${seleccion.has(String(r.id)) ? 'checked' : ''}></td>` : ''}
         ${cat.columnas.map(c => {
           const v = c.v(r);
           const chip = typeof c.chip === 'function' ? c.chip(r) : c.chip;
-          const cont = chip && v ? `<span class="chip${chip === 'alerta' ? ' chip-alerta' : ''}">${esc(v)}</span>` : esc(v);
+          const cont = chip && v ? `<span class="chip${chip === 'alerta' ? ' chip-alerta' : chip === 'ok' ? ' chip-ok' : ''}">${esc(v)}</span>` : esc(v);
           return `<td class="${c.clase || ''}">${cont}</td>`;
         }).join('')}
         <td>${r.activo ? '' : '<span class="chip chip-inactivo">Inactivo</span>'}</td>
       </tr>`).join('')
-    : `<tr><td colspan="${cat.columnas.length + 1}" class="vacio">Ningún registro coincide con los filtros.
+    : `<tr><td colspan="${cat.columnas.length + 1 + (cat.seleccion && editable ? 1 : 0)}" class="vacio">Ningún registro coincide con los filtros.
         ${hayFiltrosCol ? '<br><button class="btn btn-sec btn-chico" type="button" onclick="quitarFiltros()">Quitar filtros de columnas</button>' : ''}</td></tr>`;
 
   $('tablaWrap').innerHTML = `<table>
-    <thead><tr>${cabeza}<th scope="col"><span style="position:absolute;left:-9999px">Estado</span></th></tr></thead>
+    <thead><tr>${thSel}${cabeza}<th scope="col"><span style="position:absolute;left:-9999px">Estado</span></th></tr></thead>
     <tbody>${cuerpo}</tbody></table>`;
+  const st = $('tablaWrap').querySelector('.sel-todos');
+  if (st) st.indeterminate = marcadas > 0 && marcadas < filas.length;
 }
+
+/* ---------- Selección y cambio de condición en bloque ---------- */
+function pintarBarraSel(cat) {
+  const barra = $('barraSel');
+  if (!cat.seleccion || !seleccion.size) { barra.hidden = true; return; }
+  const n = seleccion.size;
+  barra.innerHTML = `<span><strong>${n}</strong> ${n === 1 ? cat.singular + ' seleccionada' : cat.titulo.toLowerCase() + ' seleccionadas'}.</span>
+    <span>${esc(cat.seleccion.titulo)}:</span>
+    ${Object.entries(cat.seleccion.opciones).map(([v, t]) => `<button type="button" class="btn btn-sec btn-chico" data-masivo="${v}">${esc(t)}</button>`).join('')}
+    <button type="button" class="btn-link" data-masivo="">Cancelar selección</button>`;
+  barra.hidden = false;
+}
+
+$('barraSel').addEventListener('click', async e => {
+  const b = e.target.closest('[data-masivo]');
+  if (!b) return;
+  const cat = CATALOGOS[actual];
+  if (!b.dataset.masivo) { seleccion.clear(); pintarTabla(); return; }
+  const ids = [...seleccion].map(Number);
+  const etiqueta = cat.seleccion.opciones[b.dataset.masivo];
+  if (ids.length > 20 && !confirm(`¿Cambiar ${ids.length} ${cat.titulo.toLowerCase()} a "${etiqueta}"?`)) return;
+  $('barraSel').querySelectorAll('button').forEach(x => (x.disabled = true));
+  const { error } = await sb.from(cat.tabla).update({ [cat.seleccion.campo]: b.dataset.masivo }).in('id', ids);
+  if (error) { toast(traducirError(error), true); pintarBarraSel(cat); return; }
+  toast(`${ids.length} ${ids.length === 1 ? cat.singular : cat.titulo.toLowerCase()} ${ids.length === 1 ? 'quedó' : 'quedaron'} como "${etiqueta}".`);
+  seleccion.clear();
+  await cargar(actual);
+  mostrar(actual);
+});
+
+$('tablaWrap').addEventListener('change', e => {
+  if (e.target.classList.contains('sel-fila')) {
+    const id = e.target.closest('tr').dataset.id;
+    e.target.checked ? seleccion.add(id) : seleccion.delete(id);
+    pintarTabla();
+  } else if (e.target.classList.contains('sel-todos')) {
+    const ids = [...$('tablaWrap').querySelectorAll('tbody tr[data-id]')].map(tr => tr.dataset.id);
+    ids.forEach(id => (e.target.checked ? seleccion.add(id) : seleccion.delete(id)));
+    pintarTabla();
+  }
+});
 
 function quitarFiltros() {
   delete filtrosCol[actual];
@@ -848,7 +921,7 @@ $('tablaWrap').addEventListener('click', e => {
   abrirPop(idx, b);
 });
 document.addEventListener('mousedown', e => {
-  if (!$('pop').hidden && !$('pop').contains(e.target) && !e.target.closest('.th-btn')) cerrarPop();
+  if (!$('pop').hidden && !$('pop').contains(e.target) && !(e.target instanceof Element && e.target.closest('.th-btn'))) cerrarPop();
 });
 $('pop').addEventListener('keydown', e => {
   if (e.key === 'Escape') { e.stopPropagation(); cerrarPop(true); }
@@ -862,11 +935,12 @@ $('filtroEstado').addEventListener('change', pintarTabla);
 $('btnNuevo').addEventListener('click', () => abrir());
 
 $('tablaWrap').addEventListener('click', e => {
+  if (e.target.closest('.col-sel')) return;
   const tr = e.target.closest('tr.editable');
   if (tr) abrir(datos[actual].find(r => String(r.id) === tr.dataset.id));
 });
 $('tablaWrap').addEventListener('keydown', e => {
-  if (e.key !== 'Enter') return;
+  if (e.key !== 'Enter' || e.target.closest('.col-sel')) return;
   const tr = e.target.closest('tr.editable');
   if (tr) abrir(datos[actual].find(r => String(r.id) === tr.dataset.id));
 });
@@ -918,7 +992,7 @@ function abrir(registro) {
   $('btnCancelar').textContent = 'Cancelar';
   const cat = CATALOGOS[actual];
   editando = registro || null;
-  const r = registro || { activo: true, requiere_resguardo: true, dias_credito: 0, operador: 'TELCEL', estatus: 'ACTIVA', tipo_linea: 'TELEFONIA' };
+  const r = registro || { activo: true, requiere_resguardo: true, dias_credito: 0, operador: 'TELCEL', estatus: 'ACTIVA', tipo_linea: 'TELEFONIA', condicion: 'SIN_DEFINIR' };
   $('panelTitulo').textContent = registro ? `Editar ${cat.singular}` : cat.nuevo;
 
   let html = cat.campos.map(c => htmlCampo(c, r)).join('');
