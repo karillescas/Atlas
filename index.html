@@ -133,6 +133,12 @@ tr.seleccionada td { background: var(--accent-soft); }
 .chip-ok { background: #DCEFE0; color: #1E5B2C; }
 :root[data-theme="dark"] .chip-ok { background: #1C3A24; color: #9ED8AC; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .chip-ok { background: #1C3A24; color: #9ED8AC; } }
+.lista-errores { max-height: 320px; overflow-y: auto; margin: .5rem 0 0; padding: 0; list-style: none; font-size: .88rem;
+  border: 1px solid var(--line); border-radius: 6px; }
+.lista-errores li { padding: .5rem .75rem; border-bottom: 1px solid var(--line); }
+.lista-errores li:last-child { border-bottom: none; }
+.lista-errores strong { font-variant-numeric: tabular-nums; }
+.paso { font-size: .92rem; margin: 0 0 .75rem; }
 .conteo { align-self: center; color: var(--muted); font-size: .88rem; white-space: nowrap; }
 .pop { position: fixed; z-index: 20; width: min(300px, calc(100vw - 16px)); background: var(--panel); color: var(--ink);
   border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 10px 28px rgba(0, 0, 0, .18); display: flex; flex-direction: column; overflow: hidden; }
@@ -257,7 +263,7 @@ dialog.panel form { display: flex; flex-direction: column; height: 100%; }
         <div class="resumen" id="resumen" hidden></div>
       </div>
       <div class="acciones">
-        <button class="btn btn-sec" type="button" id="btnAccion" hidden></button>
+        <span class="acciones" id="accionesExtra"></span>
         <button class="btn" type="button" id="btnNuevo"></button>
       </div>
     </div>
@@ -356,7 +362,7 @@ const CATALOGOS = {
     titulo: 'Líneas', singular: 'línea', nuevo: 'Nueva línea', femenino: true, sinActivo: true,
     descripcion: 'Líneas de telefonía, internet y GPS. Se actualizan cargando la radiografía de Telcel.',
     tabla: 'lineas', select: '*', orden: 'telefono',
-    accion: { texto: 'Cargar radiografía', fn: () => abrirCarga() },
+    acciones: [{ texto: 'Cargar radiografía', fn: () => abrirCarga() }],
     seleccion: { campo: 'condicion', titulo: 'Cambiar condición a', opciones: CONDICION_LINEA },
     resumen: filas => {
       const act = filas.filter(r => r.estatus !== 'BAJA');
@@ -402,6 +408,10 @@ const CATALOGOS = {
     titulo: 'Colaboradores', singular: 'colaborador', nuevo: 'Nuevo colaborador',
     descripcion: 'Personas a las que se asignan líneas y equipos. No necesitan cuenta en este sistema.',
     ayudaActivo: 'Desmárcalo cuando la persona deje de laborar. Su historial se conserva.',
+    acciones: [
+      { texto: 'Descargar layout', fn: () => descargarLayoutColab() },
+      { texto: 'Cargar desde Excel', fn: () => abrirCargaColab() },
+    ],
     tabla: 'colaboradores', orden: 'apellidos',
     select: '*, centros_costo(clave, nombre)',
     columnas: [
@@ -715,9 +725,9 @@ function mostrar(key) {
   const btn = $('btnNuevo');
   btn.hidden = !cat.nuevo || !puedeEscribir(cat);
   btn.textContent = cat.nuevo || '';
-  const acc = $('btnAccion');
-  acc.hidden = !cat.accion || !puedeEscribir(cat);
-  acc.textContent = cat.accion?.texto || '';
+  $('accionesExtra').innerHTML = puedeEscribir(cat)
+    ? (cat.acciones || []).map((a, i) => `<button class="btn btn-sec" type="button" data-accion="${i}">${esc(a.texto)}</button>`).join('')
+    : '';
   const fx = $('filtroExtra');
   fx.hidden = !cat.filtro;
   fx.innerHTML = cat.filtro
@@ -728,7 +738,10 @@ function mostrar(key) {
   res.innerHTML = cat.resumen ? cat.resumen(datos[key] || []).map(t => `<span>${esc(t)}</span>`).join('') : '';
   pintarTabla();
 }
-$('btnAccion').addEventListener('click', () => CATALOGOS[actual].accion?.fn());
+$('accionesExtra').addEventListener('click', e => {
+  const b = e.target.closest('[data-accion]');
+  if (b) CATALOGOS[actual].acciones[Number(b.dataset.accion)].fn();
+});
 $('filtroExtra').addEventListener('change', () => pintarTabla());
 
 /* ---------- Filtros por columna (tipo Excel) ---------- */
@@ -1132,6 +1145,7 @@ function leerFormulario(cat) {
 $('formRegistro').addEventListener('submit', async e => {
   e.preventDefault();
   if (modoPanel === 'carga') { await ejecutarCarga(); return; }
+  if (modoPanel === 'cargaColab') { await ejecutarCargaColab(); return; }
   const cat = CATALOGOS[actual];
   const payload = leerFormulario(cat);
   if (!payload) {
@@ -1253,6 +1267,158 @@ async function ejecutarCarga() {
   $('cargaArchivo').value = '';
   await Promise.all([cargar('lineas'), cargarAux()]);
   mostrar('lineas');
+}
+
+/* =========================================================
+   7c. LAYOUT Y CARGA MASIVA DE COLABORADORES
+   ========================================================= */
+const LAYOUT_COLAB = [
+  { h: 'Nombre(s)*', k: 'nombre', ancho: 20, ej: 'María Fernanda' },
+  { h: 'Apellidos*', k: 'apellidos', ancho: 24, ej: 'López Hernández' },
+  { h: 'Núm. empleado', k: 'num_empleado', ancho: 15, ej: '1045' },
+  { h: 'Clave centro de costo*', k: 'centro', ancho: 22, ej: '' },
+  { h: 'Área', k: 'area', ancho: 20, ej: 'Compras' },
+  { h: 'Jefe directo (núm. empleado o correo)', k: 'jefe', ancho: 34, ej: '' },
+  { h: 'Correo', k: 'email', ancho: 32, ej: 'mlopez@tubosyconexiones.mx' },
+  { h: 'Usuario Kore', k: 'usuario_kore', ancho: 16, ej: 'mlopez' },
+];
+let cargaColab = null;
+
+function descargarLayoutColab() {
+  const wb = XLSX.utils.book_new();
+  const hoja = XLSX.utils.aoa_to_sheet([LAYOUT_COLAB.map(c => c.h)]);
+  hoja['!cols'] = LAYOUT_COLAB.map(c => ({ wch: c.ancho }));
+  XLSX.utils.book_append_sheet(wb, hoja, 'Colaboradores');
+
+  const instr = [
+    ['Cómo llenar este layout'],
+    [''],
+    ['1. Captura una persona por renglón en la hoja "Colaboradores", a partir del renglón 2. No cambies los encabezados.'],
+    ['2. Las columnas con * son obligatorias solo para personas nuevas. Todas las demás son opcionales y pueden ir vacías.'],
+    ['3. La clave de centro de costo debe existir en el sistema. Consulta la hoja "Centros de costo".'],
+    ['4. El jefe directo se indica con su número de empleado o su correo. Puede estar en el sistema (hoja "Colaboradores actuales") o en este mismo archivo.'],
+    ['5. Si la persona ya existe (se busca por núm. de empleado, luego por correo, luego por usuario Kore), solo se actualizan las columnas que llenes; las vacías conservan lo que ya tenía.'],
+    ['6. Al subirlo, el sistema revisa todo primero. Si hay errores te dice en qué renglón y no guarda nada hasta que los corrijas.'],
+    [''],
+    ['Ejemplo de un renglón:'],
+    LAYOUT_COLAB.map(c => c.h),
+    LAYOUT_COLAB.map(c => c.k === 'centro' ? (aux.centros.find(x => x.activo)?.clave || 'CC01') : c.ej),
+  ];
+  const hi = XLSX.utils.aoa_to_sheet(instr);
+  hi['!cols'] = [{ wch: 110 }];
+  XLSX.utils.book_append_sheet(wb, hi, 'Instrucciones');
+
+  const cc = XLSX.utils.aoa_to_sheet([['Clave', 'Nombre'], ...aux.centros.filter(x => x.activo).map(x => [x.clave, x.nombre])]);
+  cc['!cols'] = [{ wch: 16 }, { wch: 40 }];
+  XLSX.utils.book_append_sheet(wb, cc, 'Centros de costo');
+
+  const act = (datos.colaboradores || []).filter(x => x.activo);
+  const co = XLSX.utils.aoa_to_sheet([['Núm. empleado', 'Nombre', 'Correo', 'Área'],
+    ...act.map(x => [x.num_empleado || '', `${x.nombre} ${x.apellidos}`, x.email || '', x.area || ''])]);
+  co['!cols'] = [{ wch: 15 }, { wch: 34 }, { wch: 32 }, { wch: 20 }];
+  XLSX.utils.book_append_sheet(wb, co, 'Colaboradores actuales');
+
+  XLSX.writeFile(wb, 'layout_colaboradores.xlsx');
+}
+
+const normalizarEncabezado = t => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\*/g, '').trim();
+function columnaDeEncabezado(t) {
+  const n = normalizarEncabezado(t);
+  if (n.startsWith('nombre')) return 'nombre';
+  if (n.startsWith('apellido')) return 'apellidos';
+  if (n.startsWith('num') || n.includes('empleado') && !n.startsWith('jefe')) return 'num_empleado';
+  if (n.includes('centro')) return 'centro';
+  if (n.startsWith('area')) return 'area';
+  if (n.startsWith('jefe')) return 'jefe';
+  if (n.startsWith('correo') || n.startsWith('email')) return 'email';
+  if (n.includes('kore')) return 'usuario_kore';
+  return null;
+}
+
+function abrirCargaColab() {
+  modoPanel = 'cargaColab';
+  cargaColab = null;
+  editando = null;
+  $('panelTitulo').textContent = 'Cargar colaboradores';
+  $('panelCampos').innerHTML = `
+    <p class="paso">Sube el layout lleno. Primero se revisa todo y te muestro qué va a pasar; nada se guarda hasta que confirmes.</p>
+    <div class="zona-archivo"><input type="file" id="colabArchivo" accept=".xlsx,.xls,.csv" aria-label="Layout de colaboradores"></div>
+    <div id="colabVista"></div>`;
+  $('btnGuardar').hidden = true;
+  $('btnCancelar').textContent = 'Cerrar';
+  $('colabArchivo').addEventListener('change', revisarCargaColab);
+  $('panel').showModal();
+}
+
+async function revisarCargaColab(e) {
+  const file = e.target.files[0];
+  cargaColab = null;
+  $('btnGuardar').hidden = true;
+  if (!file) return;
+  const vista = $('colabVista');
+  try {
+    const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+    const nombreHoja = wb.SheetNames.find(n => normalizarEncabezado(n) === 'colaboradores') || wb.SheetNames[0];
+    const matriz = XLSX.utils.sheet_to_json(wb.Sheets[nombreHoja], { header: 1, raw: false, defval: '' });
+    const encabezados = (matriz[0] || []).map(columnaDeEncabezado);
+    if (!encabezados.includes('nombre') || !encabezados.includes('apellidos')) {
+      vista.innerHTML = '<div class="aviso">No reconozco este archivo. Usa el layout que descargas con el botón "Descargar layout" y no cambies los encabezados.</div>';
+      return;
+    }
+    const filas = matriz.slice(1).map((arr, i) => {
+      const o = { _fila: i + 2 };
+      encabezados.forEach((k, j) => { if (k) o[k] = String(arr[j] ?? '').trim(); });
+      return o;
+    }).filter(o => Object.keys(o).some(k => k !== '_fila' && o[k]));
+    if (!filas.length) { vista.innerHTML = '<div class="aviso">El layout no tiene renglones con datos.</div>'; return; }
+
+    vista.innerHTML = '<p class="paso">Revisando…</p>';
+    const { data, error } = await sb.rpc('importar_colaboradores', { p_filas: filas, p_aplicar: false });
+    if (error) { vista.innerHTML = `<div class="aviso">${esc(traducirError(error))}</div>`; return; }
+
+    const errores = data.errores || [];
+    vista.innerHTML = `
+      <div class="cifras">
+        <div><strong>${data.total}</strong><span>renglones con datos</span></div>
+        <div><strong>${errores.length}</strong><span>renglones con error</span></div>
+        <div><strong>${data.nuevos}</strong><span>personas nuevas</span></div>
+        <div><strong>${data.actualizados}</strong><span>ya existen (se actualizan)</span></div>
+      </div>
+      ${errores.length ? `
+        <div class="aviso">Hay ${errores.length} ${errores.length === 1 ? 'renglón' : 'renglones'} con error. Corrige el archivo y vuelve a subirlo; no se guardó nada.</div>
+        <ul class="lista-errores">${errores.slice(0, 100).map(x => `<li><strong>Renglón ${x.fila}:</strong> ${esc(x.mensaje)}</li>`).join('')}
+          ${errores.length > 100 ? `<li>…y ${errores.length - 100} más.</li>` : ''}</ul>`
+      : '<p class="paso">Todo está correcto. Confirma para guardar.</p>'}`;
+    if (!errores.length) {
+      cargaColab = filas;
+      $('btnGuardar').textContent = `Cargar ${data.total} colaboradores`;
+      $('btnGuardar').hidden = false;
+    }
+  } catch (err) {
+    vista.innerHTML = `<div class="aviso">No se pudo leer el archivo: ${esc(err.message)}</div>`;
+  }
+}
+
+async function ejecutarCargaColab() {
+  if (!cargaColab) return;
+  const btn = $('btnGuardar');
+  const texto = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Guardando…';
+  const { data, error } = await sb.rpc('importar_colaboradores', { p_filas: cargaColab, p_aplicar: true });
+  btn.disabled = false; btn.textContent = texto;
+  if (error) { toast(`No se guardó nada: ${traducirError(error)}`, true); return; }
+  if (!data.aplicado) { toast('Alguien cambió datos mientras revisabas. Vuelve a subir el archivo.', true); return; }
+  cargaColab = null;
+  btn.hidden = true;
+  $('colabArchivo').value = '';
+  $('colabVista').innerHTML = `
+    <p><strong>Colaboradores cargados.</strong></p>
+    <div class="cifras">
+      <div><strong>${data.nuevos}</strong><span>dados de alta</span></div>
+      <div><strong>${data.actualizados}</strong><span>actualizados</span></div>
+    </div>`;
+  await Promise.all([cargar('colaboradores'), cargarAux()]);
+  mostrar('colaboradores');
 }
 
 /* =========================================================
