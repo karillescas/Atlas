@@ -268,10 +268,10 @@ dialog.panel form { display: flex; flex-direction: column; height: 100%; }
    1. CONEXIÓN — pega aquí los datos de tu proyecto Supabase
       (Project Settings > API > Project URL y anon public key)
    ========================================================= */
-const SUPABASE_URL = 'https://TU-PROYECTO.supabase.co';
-const SUPABASE_ANON_KEY = 'TU_ANON_KEY';
+const SUPABASE_URL = 'https://yoalzgvfpshdverbgors.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_ZHMN8aaLLQjpp-V8DshNmg_8yir-Zp9';
 
-const configurado = !SUPABASE_URL.includes('TU-PROYECTO');
+const configurado = !SUPABASE_URL.includes('TU-PROYECTO') && !SUPABASE_ANON_KEY.startsWith('TU_');
 const sb = configurado ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
 /* =========================================================
