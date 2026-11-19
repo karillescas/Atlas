@@ -403,13 +403,13 @@ const CATALOGOS = {
     descripcion: 'Personas a las que se asignan líneas y equipos. No necesitan cuenta en este sistema.',
     ayudaActivo: 'Desmárcalo cuando la persona deje de laborar. Su historial se conserva.',
     tabla: 'colaboradores', orden: 'apellidos',
-    select: '*, centros_costo(clave, nombre), jefe:colaboradores!jefe_id(nombre, apellidos)',
+    select: '*, centros_costo(clave, nombre)',
     columnas: [
       { t: 'Núm. empleado', v: r => r.num_empleado, clase: 'mono' },
       { t: 'Nombre', v: r => `${r.nombre} ${r.apellidos}` },
       { t: 'Área', v: r => r.area },
       { t: 'Centro de costo', v: r => r.centros_costo ? `${r.centros_costo.clave} ${r.centros_costo.nombre}` : '' },
-      { t: 'Jefe directo', v: r => r.jefe ? `${r.jefe.nombre} ${r.jefe.apellidos}` : '' },
+      { t: 'Jefe directo', v: r => nombreColaborador(r.jefe_id) },
       { t: 'Correo', v: r => r.email },
       { t: 'Usuario Kore', v: r => r.usuario_kore, clase: 'mono' },
     ],
@@ -555,6 +555,11 @@ let ultimaCarga = null;
 let editando = null;
 const datos = {};
 const aux = { marcas: [], tipos: [], centros: [], colaboradores: [] };
+const nombreColaborador = id => {
+  if (id == null) return '';
+  const p = aux.colaboradores.find(x => x.id === id);
+  return p ? `${p.nombre} ${p.apellidos}` : '';
+};
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
