@@ -9,6 +9,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,400..700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 /* Colores y tipografía de la aplicación */
 :root {
@@ -107,6 +108,16 @@ fieldset.campo { border: 1px solid var(--line); border-radius: 6px; padding: .7r
 .nav-item:hover { background: rgba(255,255,255,.05); }
 .nav-item[aria-current="page"] { border-left-color: var(--signal); background: rgba(255,255,255,.08); font-weight: 600; }
 .nav-item .cuenta { color: var(--rail-muted); font-variant-numeric: tabular-nums; font-size: .85rem; }
+.nav-grupo { font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--rail-muted); padding: 1rem 1.25rem .35rem; }
+.chip-alerta { background: var(--danger-soft); color: var(--danger); }
+.resumen { display: flex; gap: .5rem; flex-wrap: wrap; margin: .6rem 0 0; }
+.resumen span { font-size: .85rem; padding: .2rem .6rem; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); font-variant-numeric: tabular-nums; }
+.acciones { display: flex; gap: .6rem; flex-wrap: wrap; }
+.zona-archivo { border: 2px dashed var(--line); border-radius: 8px; padding: 1.25rem; text-align: center; margin-bottom: 1rem; }
+.cifras { display: grid; grid-template-columns: repeat(2, 1fr); gap: .6rem; margin: 1rem 0; }
+.cifras div { border: 1px solid var(--line); border-radius: 6px; padding: .6rem .8rem; }
+.cifras strong { display: block; font-size: 1.5rem; font-stretch: 85%; font-variant-numeric: tabular-nums; }
+.cifras span { font-size: .82rem; color: var(--muted); }
 .rail-pie { padding: 1rem 1.25rem; border-top: 1px solid rgba(255,255,255,.1); font-size: .85rem; }
 .rail-pie .rol { color: var(--rail-muted); display: block; margin-bottom: .5rem; }
 .rail-pie button { background: none; border: 1px solid rgba(255,255,255,.25); color: var(--rail-ink); border-radius: 6px; padding: .35rem .8rem; cursor: pointer; }
@@ -162,6 +173,7 @@ dialog.panel form { display: flex; flex-direction: column; height: 100%; }
   .rail nav { flex-direction: row; padding: 0; }
   .nav-item { border-left: none; border-bottom: 4px solid transparent; padding: .8rem 1rem; gap: .5rem; white-space: nowrap; }
   .nav-item[aria-current="page"] { border-bottom-color: var(--signal); }
+  .nav-grupo { display: none; }
   .rail-pie { border-top: none; display: flex; align-items: center; gap: .6rem; padding: .5rem 1rem; }
   .rail-pie .rol { display: none; }
   main { padding: 1.25rem 1rem; }
@@ -199,7 +211,7 @@ dialog.panel form { display: flex; flex-direction: column; height: 100%; }
   <aside class="rail">
     <div class="marca-app">
       <strong>Control de equipos TI</strong>
-      <span>Configuración</span>
+      <span>Sistemas</span>
     </div>
     <nav id="nav" aria-label="Catálogos"></nav>
     <div class="rail-pie">
@@ -213,12 +225,17 @@ dialog.panel form { display: flex; flex-direction: column; height: 100%; }
       <div>
         <h1 id="titulo"></h1>
         <p id="descripcion"></p>
+        <div class="resumen" id="resumen" hidden></div>
       </div>
-      <button class="btn" type="button" id="btnNuevo"></button>
+      <div class="acciones">
+        <button class="btn btn-sec" type="button" id="btnAccion" hidden></button>
+        <button class="btn" type="button" id="btnNuevo"></button>
+      </div>
     </div>
     <div class="barra">
       <input type="search" id="buscar" placeholder="Buscar" aria-label="Buscar en el catálogo">
-      <select id="filtroEstado" aria-label="Filtrar por estado">
+      <select id="filtroExtra" aria-label="Filtro adicional" hidden></select>
+    <select id="filtroEstado" aria-label="Filtrar por estado">
         <option value="activos">Activos</option>
         <option value="inactivos">Inactivos</option>
         <option value="todos">Todos</option>
@@ -251,10 +268,10 @@ dialog.panel form { display: flex; flex-direction: column; height: 100%; }
    1. CONEXIÓN — pega aquí los datos de tu proyecto Supabase
       (Project Settings > API > Project URL y anon public key)
    ========================================================= */
-const SUPABASE_URL = 'https://yoalzgvfpshdverbgors.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_ZHMN8aaLLQjpp-V8DshNmg_8yir-Zp9';
+const SUPABASE_URL = 'https://TU-PROYECTO.supabase.co';
+const SUPABASE_ANON_KEY = 'TU_ANON_KEY';
 
-const configurado = !SUPABASE_URL.includes('ATLAS');
+const configurado = !SUPABASE_URL.includes('TU-PROYECTO');
 const sb = configurado ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
 /* =========================================================
@@ -293,8 +310,54 @@ const textoASpecs = t => {
   return o;
 };
 
+const TIPOS_LINEA = { TELEFONIA: 'Telefonía', INTERNET: 'Internet', GPS: 'GPS' };
+const ESTATUS_LINEA = { ACTIVA: 'Activa', NO_EN_RADIOGRAFIA: 'No vino en la radiografía', BAJA: 'Baja' };
+const fmtFecha = d => d ? d.slice(0, 10).split('-').reverse().join('/') : '';
+const fmtMoneda = n => n == null ? '' : Number(n).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
+
 const CATALOGOS = {
+  lineas: {
+    grupo: 'Inventario',
+    titulo: 'Líneas', singular: 'línea', nuevo: 'Nueva línea', femenino: true, sinActivo: true,
+    descripcion: 'Líneas de telefonía, internet y GPS. Se actualizan cargando la radiografía de Telcel.',
+    tabla: 'lineas', select: '*', orden: 'telefono',
+    accion: { texto: 'Cargar radiografía', fn: () => abrirCarga() },
+    filtro: { k: 'tipo_linea', todos: 'Todos los tipos', opciones: TIPOS_LINEA },
+    resumen: filas => {
+      const act = filas.filter(r => r.estatus !== 'BAJA');
+      const por = t => act.filter(r => r.tipo_linea === t).length;
+      const renta = act.reduce((s, r) => s + Number(r.renta_mensual || 0), 0);
+      const revisar = act.filter(r => r.estatus === 'NO_EN_RADIOGRAFIA').length;
+      return [`${act.length} líneas`, `${por('TELEFONIA')} telefonía`, `${por('GPS')} GPS`, `${por('INTERNET')} internet`,
+              `Renta mensual ${fmtMoneda(renta)}`, ultimaCarga ? `Última radiografía: ${fmtFecha(ultimaCarga.fecha_corte)}` : 'Sin radiografías cargadas']
+             .concat(revisar ? [`${revisar} por revisar`] : []);
+    },
+    columnas: [
+      { t: 'Teléfono', v: r => r.telefono, clase: 'mono' },
+      { t: 'Tipo', v: r => TIPOS_LINEA[r.tipo_linea], chip: true },
+      { t: 'Plan', v: r => r.plan },
+      { t: 'Renta', v: r => fmtMoneda(r.renta_mensual), clase: 'mono' },
+      { t: 'Esquema', v: r => r.tipo_esquema === 'Plazo Forzoso con Equipo' ? `Plazo forzoso (${r.meses_restantes ?? '?'} meses)` : r.tipo_esquema },
+      { t: 'Fin de plazo', v: r => fmtFecha(r.fecha_fin_servicio), clase: 'mono' },
+      { t: 'Equipo según Telcel', v: r => r.equipo_radiografia },
+      { t: 'Estatus', v: r => r.estatus === 'ACTIVA' ? '' : ESTATUS_LINEA[r.estatus], chip: 'alerta' },
+    ],
+    campos: [
+      { k: 'telefono', t: 'Teléfono', req: true, soloLecturaEditar: true, patron: /^\d{10}$/, msgPatron: 'Deben ser 10 dígitos, sin espacios.' },
+      { k: 'tipo_linea', t: 'Tipo de línea', req: true, tipo: 'select', opciones: () => Object.entries(TIPOS_LINEA), ayuda: 'Si lo cambias a mano, las siguientes radiografías respetarán tu elección.' },
+      { k: 'iccid', t: 'ICCID (SIM)' },
+      { k: 'operador', t: 'Operador', req: true, mayus: true },
+      { k: 'plan', t: 'Plan' },
+      { k: 'renta_mensual', t: 'Renta mensual con IVA', tipo: 'decimal' },
+      { k: 'tipo_esquema', t: 'Esquema', tipo: 'select', opciones: () => [['Libre', 'Libre'], ['Plazo Forzoso con Equipo', 'Plazo forzoso con equipo']] },
+      { k: 'fecha_fin_servicio', t: 'Fin de plazo forzoso', tipo: 'date' },
+      { k: 'estatus', t: 'Estatus', req: true, tipo: 'select', opciones: () => Object.entries(ESTATUS_LINEA), ayuda: 'Marca Baja cuando la línea se cancele con el operador.' },
+      { k: 'notas', t: 'Notas', tipo: 'textarea' },
+    ],
+  },
+
   proveedores: {
+    grupo: 'Configuración',
     titulo: 'Proveedores', singular: 'proveedor', nuevo: 'Nuevo proveedor',
     descripcion: 'El RFC se usa para reconocer al emisor cuando cargues facturas en XML.',
     tabla: 'proveedores', select: '*', orden: 'razon_social',
@@ -320,6 +383,7 @@ const CATALOGOS = {
   },
 
   tipos: {
+    grupo: 'Configuración',
     titulo: 'Tipos de equipo', singular: 'tipo', nuevo: 'Nuevo tipo',
     descripcion: 'El tipo define si un equipo se controla pieza por pieza o por cantidad, y si requiere resguardo.',
     tabla: 'tipos_equipo', select: '*', orden: 'nombre',
@@ -340,6 +404,7 @@ const CATALOGOS = {
   },
 
   marcas: {
+    grupo: 'Configuración',
     titulo: 'Marcas', singular: 'marca', nuevo: 'Nueva marca',
     descripcion: 'Fabricantes de los equipos y suministros.',
     tabla: 'marcas', select: '*', orden: 'nombre',
@@ -348,6 +413,7 @@ const CATALOGOS = {
   },
 
   modelos: {
+    grupo: 'Configuración',
     titulo: 'Modelos', singular: 'modelo', nuevo: 'Nuevo modelo',
     descripcion: 'Cada modelo pertenece a una marca y a un tipo, ej. Dell Latitude 5440 es una laptop.',
     tabla: 'modelos', select: '*, marcas(nombre), tipos_equipo(nombre)', orden: 'nombre',
@@ -368,6 +434,7 @@ const CATALOGOS = {
   },
 
   usuarios: {
+    grupo: 'Configuración',
     titulo: 'Usuarios del sistema', singular: 'usuario', nuevo: null, soloAdmin: true,
     descripcion: 'Personas que pueden entrar a esta aplicación. Quienes reciben equipos en resguardo se darán de alta en Colaboradores.',
     nota: 'Para agregar a alguien, invítalo desde Supabase en Authentication > Users. Aparecerá aquí como inactivo con rol Consulta; ábrelo para activarlo y asignarle su rol.',
@@ -391,7 +458,8 @@ const ROLES = { ADMIN: 'Administrador', TI: 'Sistemas', CONSULTA: 'Consulta' };
    3. ESTADO
    ========================================================= */
 let perfil = null;
-let actual = 'proveedores';
+let actual = 'lineas';
+let ultimaCarga = null;
 let editando = null;
 const datos = {};
 const aux = { marcas: [], tipos: [] };
@@ -415,7 +483,9 @@ async function entrar(session) {
   const { data, error } = await sb.from('usuarios').select('*').eq('id', session.user.id).maybeSingle();
   if (error || !data) {
     await sb.auth.signOut();
-    mostrarLogin('Tu cuenta existe pero aún no está activa. Pide a un administrador que la active.');
+    mostrarLogin(error
+      ? `Entraste, pero no se pudo leer tu perfil: ${traducirError(error)}`
+      : 'Tu cuenta existe pero aún no está activa. Pide a un administrador que la active.');
     return;
   }
   perfil = data;
@@ -483,6 +553,8 @@ async function cargarAux() {
     sb.from('marcas').select('id,nombre').eq('activo', true).order('nombre'),
     sb.from('tipos_equipo').select('id,nombre').eq('activo', true).order('nombre'),
   ]);
+  const { data: rad } = await sb.from('radiografias').select('*').order('created_at', { ascending: false }).limit(1);
+  ultimaCarga = rad?.[0] || null;
   aux.marcas = m.data || [];
   aux.tipos = t.data || [];
 }
@@ -503,9 +575,11 @@ function traducirError(err) {
    6. VISTA DE CATÁLOGO
    ========================================================= */
 function pintarNav() {
+  let grupo = '';
   $('nav').innerHTML = Object.entries(CATALOGOS).map(([key, cat]) => {
     const activos = (datos[key] || []).filter(r => r.activo).length;
-    return `<button class="nav-item" type="button" data-key="${key}" ${key === actual ? 'aria-current="page"' : ''}>
+    const cab = cat.grupo !== grupo ? `<div class="nav-grupo">${esc(grupo = cat.grupo)}</div>` : '';
+    return `${cab}<button class="nav-item" type="button" data-key="${key}" ${key === actual ? 'aria-current="page"' : ''}>
       <span>${esc(cat.titulo)}</span><span class="cuenta">${activos}</span></button>`;
   }).join('');
 }
@@ -526,8 +600,21 @@ function mostrar(key) {
   const btn = $('btnNuevo');
   btn.hidden = !cat.nuevo || !puedeEscribir(cat);
   btn.textContent = cat.nuevo || '';
+  const acc = $('btnAccion');
+  acc.hidden = !cat.accion || !puedeEscribir(cat);
+  acc.textContent = cat.accion?.texto || '';
+  const fx = $('filtroExtra');
+  fx.hidden = !cat.filtro;
+  fx.innerHTML = cat.filtro
+    ? `<option value="">${esc(cat.filtro.todos)}</option>` + Object.entries(cat.filtro.opciones).map(([v, t]) => `<option value="${v}">${esc(t)}</option>`).join('')
+    : '';
+  const res = $('resumen');
+  res.hidden = !cat.resumen;
+  res.innerHTML = cat.resumen ? cat.resumen(datos[key] || []).map(t => `<span>${esc(t)}</span>`).join('') : '';
   pintarTabla();
 }
+$('btnAccion').addEventListener('click', () => CATALOGOS[actual].accion?.fn());
+$('filtroExtra').addEventListener('change', () => pintarTabla());
 
 function pintarTabla() {
   const cat = CATALOGOS[actual];
@@ -537,6 +624,7 @@ function pintarTabla() {
 
   const filas = (datos[actual] || [])
     .filter(r => estado === 'todos' || (estado === 'activos' ? r.activo : !r.activo))
+    .filter(r => !cat.filtro || !$('filtroExtra').value || r[cat.filtro.k] === $('filtroExtra').value)
     .filter(r => !q || cat.columnas.map(c => c.v(r) ?? '').join(' ').toLowerCase().includes(q));
 
   if (!filas.length) {
@@ -556,7 +644,7 @@ function pintarTabla() {
       <tr class="${editable ? 'editable' : ''} ${r.activo ? '' : 'inactivo'}" data-id="${esc(r.id)}" ${editable ? 'tabindex="0"' : ''}>
         ${cat.columnas.map(c => {
           const v = c.v(r);
-          const cont = c.chip && v ? `<span class="chip">${esc(v)}</span>` : esc(v);
+          const cont = c.chip && v ? `<span class="chip${c.chip === 'alerta' ? ' chip-alerta' : ''}">${esc(v)}</span>` : esc(v);
           return `<td class="${c.clase || ''}">${cont}</td>`;
         }).join('')}
         <td>${r.activo ? '' : '<span class="chip chip-inactivo">Inactivo</span>'}</td>
@@ -588,6 +676,7 @@ function htmlCampo(c, r) {
   const req = c.req ? ' required' : '';
   const desc = c.ayuda ? ` aria-describedby="${id}_ayuda"` : '';
   const val = r[c.k];
+  const ro = c.soloLectura || (c.soloLecturaEditar && r.id);
 
   if (c.tipo === 'check') {
     return `<div class="campo"><label class="opcion"><input type="checkbox" id="${id}" ${val ? 'checked' : ''}> ${esc(c.t)}</label></div>`;
@@ -609,22 +698,27 @@ function htmlCampo(c, r) {
     const t = c.tipo === 'specs' ? specsATexto(val) : (val ?? '');
     input = `<textarea id="${id}"${desc}>${esc(t)}</textarea>`;
   } else {
-    const type = c.tipo === 'number' ? 'number' : c.tipo === 'email' ? 'email' : 'text';
-    const extra = c.tipo === 'number' ? ' min="0" step="1"' : '';
-    input = `<input type="${type}" id="${id}" value="${esc(val ?? '')}"${req}${desc}${extra}${c.soloLectura ? ' readonly' : ''}${c.mayus ? ' style="text-transform:uppercase"' : ''}>`;
+    const type = { number: 'number', decimal: 'number', email: 'email', date: 'date' }[c.tipo] || 'text';
+    const extra = c.tipo === 'number' ? ' min="0" step="1"' : c.tipo === 'decimal' ? ' min="0" step="0.01"' : '';
+    const v = c.tipo === 'date' ? (val || '').slice(0, 10) : (val ?? '');
+    input = `<input type="${type}" id="${id}" value="${esc(v)}"${req}${desc}${extra}${ro ? ' readonly' : ''}${c.mayus ? ' style="text-transform:uppercase"' : ''}>`;
   }
   return `<div class="campo" id="${id}_campo"><label for="${id}">${esc(c.t)}${c.req ? '' : ' <span style="font-weight:400;color:var(--muted)">(opcional)</span>'}</label>${input}${ayuda}${err}</div>`;
 }
 
 function abrir(registro) {
+  modoPanel = 'edicion';
+  $('btnGuardar').hidden = false;
+  $('btnGuardar').textContent = 'Guardar';
+  $('btnCancelar').textContent = 'Cancelar';
   const cat = CATALOGOS[actual];
   editando = registro || null;
-  const r = registro || { activo: true, requiere_resguardo: true, dias_credito: 0 };
+  const r = registro || { activo: true, requiere_resguardo: true, dias_credito: 0, operador: 'TELCEL', estatus: 'ACTIVA', tipo_linea: 'TELEFONIA' };
   $('panelTitulo').textContent = registro ? `Editar ${cat.singular}` : cat.nuevo;
 
   let html = cat.campos.map(c => htmlCampo(c, r)).join('');
   const esUnoMismo = actual === 'usuarios' && registro && registro.id === perfil.id;
-  if (registro && !esUnoMismo) {
+  if (registro && !esUnoMismo && !cat.sinActivo) {
     html += `<div class="campo"><label class="opcion"><input type="checkbox" id="f_activo" ${r.activo ? 'checked' : ''}>
       <span>Activo<small>Los registros inactivos no aparecen para nuevas altas, pero conservan su historial.</small></span></label></div>`;
   }
@@ -660,7 +754,7 @@ function leerFormulario(cat) {
     }
     const el = $(`f_${c.k}`);
     if (c.tipo === 'check') { payload[c.k] = el.checked; continue; }
-    if (el.disabled) continue;
+    if (el.disabled || el.readOnly) continue;
     if (c.tipo === 'specs') { payload[c.k] = textoASpecs(el.value); continue; }
 
     let v = el.value.trim();
@@ -672,17 +766,18 @@ function leerFormulario(cat) {
     marcarError(c, msg);
     if (msg) valido = false;
 
-    if (c.tipo === 'number' || c.num) payload[c.k] = v === '' ? (c.k === 'dias_credito' ? 0 : null) : Number(v);
+    if (c.tipo === 'number' || c.tipo === 'decimal' || c.num) payload[c.k] = v === '' ? (c.k === 'dias_credito' ? 0 : null) : Number(v);
     else payload[c.k] = v === '' ? null : v;
   }
   const act = $('f_activo');
   if (act) payload.activo = act.checked;
-  else if (!editando && actual !== 'usuarios') payload.activo = true;
+  else if (!editando && actual !== 'usuarios' && !cat.sinActivo) payload.activo = true;
   return valido ? payload : null;
 }
 
 $('formRegistro').addEventListener('submit', async e => {
   e.preventDefault();
+  if (modoPanel === 'carga') { await ejecutarCarga(); return; }
   const cat = CATALOGOS[actual];
   const payload = leerFormulario(cat);
   if (!payload) {
@@ -699,13 +794,112 @@ $('formRegistro').addEventListener('submit', async e => {
 
   if (error) { toast(traducirError(error), true); return; }
   const nombre = cat.singular.charAt(0).toUpperCase() + cat.singular.slice(1);
-  const fem = ['marca'].includes(cat.singular);
+  const fem = cat.femenino || ['marca'].includes(cat.singular);
   toast(`${nombre} ${editando ? (fem ? 'actualizada' : 'actualizado') : (fem ? 'guardada' : 'guardado')}.`);
   cerrarPanel();
   await cargar(actual);
   if (actual === 'marcas' || actual === 'tipos') await cargarAux();
   mostrar(actual);
 });
+
+/* =========================================================
+   7b. CARGA DE RADIOGRAFÍA (Excel de Telcel)
+   ========================================================= */
+let modoPanel = 'edicion';
+let cargaFilas = null;
+const COLUMNAS_REQUERIDAS = ['Telefono', 'ICCID', 'Nombre de Oferta Primaria', 'RFC'];
+
+function clasificar(plan, equipo) {   // misma regla que fn_clasificar_linea en la base
+  plan = plan || ''; equipo = equipo || '';
+  if (/MI AUTO/i.test(plan) || /(CELLO|TOPFLYTECH|TRACKER|GPS)/i.test(equipo)) return 'GPS';
+  if (/INTERNET/i.test(plan) || /(ROUTER|MODEM|MIFI|HOTSPOT)/i.test(equipo)) return 'INTERNET';
+  return 'TELEFONIA';
+}
+
+function abrirCarga() {
+  modoPanel = 'carga';
+  cargaFilas = null;
+  editando = null;
+  $('panelTitulo').textContent = 'Cargar radiografía';
+  $('panelCampos').innerHTML = `
+    <p class="nota">Sube el Excel tal como lo envía Telcel. Las líneas nuevas se dan de alta, las existentes se actualizan
+      y las de la misma razón social que ya no vengan se marcan para revisión. Nada se borra.</p>
+    <div class="zona-archivo">
+      <input type="file" id="cargaArchivo" accept=".xlsx,.xls" aria-label="Archivo de radiografía">
+    </div>
+    <div class="campo" id="f_corte_campo">
+      <label for="cargaCorte">Fecha de corte de la radiografía</label>
+      <input type="date" id="cargaCorte" value="${new Date().toISOString().slice(0, 10)}">
+      <span class="ayuda">Se toma del nombre del archivo cuando trae "al_ddmmaa"; revísala.</span>
+    </div>
+    <div id="cargaVista"></div>`;
+  $('btnGuardar').hidden = true;
+  $('btnGuardar').textContent = 'Cargar líneas';
+  $('btnCancelar').textContent = 'Cerrar';
+  $('cargaArchivo').addEventListener('change', leerArchivoCarga);
+  $('panel').showModal();
+}
+
+async function leerArchivoCarga(e) {
+  const file = e.target.files[0];
+  cargaFilas = null;
+  $('btnGuardar').hidden = true;
+  if (!file) return;
+  const m = file.name.match(/al_(\d{2})(\d{2})(\d{2})/i);
+  if (m) $('cargaCorte').value = `20${m[3]}-${m[2]}-${m[1]}`;
+  try {
+    const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+    const hoja = wb.Sheets[wb.SheetNames[0]];
+    const filas = XLSX.utils.sheet_to_json(hoja, { raw: false, defval: null });
+    const faltan = COLUMNAS_REQUERIDAS.filter(c => !(filas[0] && c in filas[0]));
+    if (!filas.length || faltan.length) {
+      $('cargaVista').innerHTML = `<div class="aviso">Este archivo no parece una radiografía de Telcel. Faltan las columnas: ${esc(faltan.join(', ') || 'todas')}.</div>`;
+      return;
+    }
+    const existentes = new Set((datos.lineas || []).map(r => r.telefono));
+    const tel = f => String(f.Telefono || '').replace(/\D/g, '');
+    const validas = filas.filter(f => tel(f).length === 10);
+    const nuevas = validas.filter(f => !existentes.has(tel(f))).length;
+    const cuenta = t => validas.filter(f => clasificar(f['Nombre de Oferta Primaria'], f.Equipo) === t).length;
+    cargaFilas = { nombre: file.name, filas };
+    $('cargaVista').innerHTML = `
+      <div class="cifras">
+        <div><strong>${validas.length}</strong><span>líneas en el archivo</span></div>
+        <div><strong>${nuevas}</strong><span>nuevas para el sistema</span></div>
+        <div><strong>${cuenta('TELEFONIA')}</strong><span>telefonía</span></div>
+        <div><strong>${cuenta('GPS')}</strong><span>GPS</span></div>
+        <div><strong>${cuenta('INTERNET')}</strong><span>internet</span></div>
+        <div><strong>${filas.length - validas.length}</strong><span>renglones sin teléfono válido (se omiten)</span></div>
+      </div>`;
+    $('btnGuardar').hidden = false;
+  } catch (err) {
+    $('cargaVista').innerHTML = `<div class="aviso">No se pudo leer el archivo: ${esc(err.message)}</div>`;
+  }
+}
+
+async function ejecutarCarga() {
+  if (!cargaFilas) return;
+  const btn = $('btnGuardar');
+  btn.disabled = true; btn.textContent = 'Cargando…';
+  const { data, error } = await sb.rpc('importar_radiografia', {
+    p_fecha: $('cargaCorte').value, p_archivo: cargaFilas.nombre, p_filas: cargaFilas.filas,
+  });
+  btn.disabled = false; btn.textContent = 'Cargar líneas';
+  if (error) { toast(`No se cargó nada: ${traducirError(error)}`, true); return; }
+  cargaFilas = null;
+  btn.hidden = true;
+  $('cargaVista').innerHTML = `
+    <p><strong>Radiografía cargada.</strong></p>
+    <div class="cifras">
+      <div><strong>${data.nuevas}</strong><span>líneas nuevas</span></div>
+      <div><strong>${data.actualizadas}</strong><span>actualizadas</span></div>
+      <div><strong>${data.reaparecidas}</strong><span>volvieron a aparecer</span></div>
+      <div><strong>${data.no_encontradas}</strong><span>ya no vinieron (por revisar)</span></div>
+    </div>`;
+  $('cargaArchivo').value = '';
+  await Promise.all([cargar('lineas'), cargarAux()]);
+  mostrar('lineas');
+}
 
 /* =========================================================
    8. AVISOS
