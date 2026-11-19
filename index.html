@@ -118,6 +118,25 @@ fieldset.campo { border: 1px solid var(--line); border-radius: 6px; padding: .7r
 .cifras div { border: 1px solid var(--line); border-radius: 6px; padding: .6rem .8rem; }
 .cifras strong { display: block; font-size: 1.5rem; font-stretch: 85%; font-variant-numeric: tabular-nums; }
 .cifras span { font-size: .82rem; color: var(--muted); }
+.th-btn { background: none; border: none; padding: 0; font: inherit; color: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: .35rem; font-weight: 600; white-space: nowrap; }
+.th-btn:hover { color: var(--ink); }
+.th-btn.activo { color: var(--accent); }
+.th-ico { display: inline-flex; width: 14px; height: 14px; }
+.th-ico svg { width: 14px; height: 14px; }
+.conteo { align-self: center; color: var(--muted); font-size: .88rem; white-space: nowrap; }
+.pop { position: fixed; z-index: 20; width: min(300px, calc(100vw - 16px)); background: var(--panel); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 10px 28px rgba(0, 0, 0, .18); display: flex; flex-direction: column; overflow: hidden; }
+.pop-ord { border-bottom: 1px solid var(--line); padding: .25rem 0; }
+.pop-ord button { display: flex; gap: .5rem; width: 100%; text-align: left; background: none; border: none; padding: .5rem .9rem; cursor: pointer; font-size: .9rem; }
+.pop-ord button:hover, .pop-ord button[aria-pressed="true"] { background: var(--accent-soft); }
+.pop-cuerpo { padding: .6rem .9rem; display: flex; flex-direction: column; gap: .45rem; min-height: 0; }
+.pop-lista { overflow-y: auto; max-height: 240px; border: 1px solid var(--line); border-radius: 6px; padding: .2rem .55rem; }
+.pop-op { display: flex; gap: .5rem; align-items: flex-start; padding: .25rem 0; font-size: .88rem; cursor: pointer; }
+.pop-op input { margin-top: .2rem; flex: none; }
+.pop-op .n { margin-left: auto; padding-left: .5rem; color: var(--muted); font-variant-numeric: tabular-nums; font-size: .8rem; }
+.pop-todos { font-weight: 600; }
+.pop-pie { display: flex; justify-content: space-between; gap: .5rem; padding: .6rem .9rem; border-top: 1px solid var(--line); }
+.btn-chico { padding: .4rem .8rem; font-size: .88rem; }
 .rail-pie { padding: 1rem 1.25rem; border-top: 1px solid rgba(255,255,255,.1); font-size: .85rem; }
 .rail-pie .rol { color: var(--rail-muted); display: block; margin-bottom: .5rem; }
 .rail-pie button { background: none; border: 1px solid rgba(255,255,255,.25); color: var(--rail-ink); border-radius: 6px; padding: .35rem .8rem; cursor: pointer; }
@@ -235,6 +254,8 @@ dialog.panel form { display: flex; flex-direction: column; height: 100%; }
     <div class="barra">
       <input type="search" id="buscar" placeholder="Buscar" aria-label="Buscar en el catálogo">
       <select id="filtroExtra" aria-label="Filtro adicional" hidden></select>
+    <button class="btn btn-sec btn-chico" type="button" id="btnQuitarFiltros" hidden>Quitar filtros de columnas</button>
+    <span class="conteo" id="conteo" aria-live="polite"></span>
     <select id="filtroEstado" aria-label="Filtrar por estado">
         <option value="activos">Activos</option>
         <option value="inactivos">Inactivos</option>
@@ -260,6 +281,8 @@ dialog.panel form { display: flex; flex-direction: column; height: 100%; }
     </div>
   </form>
 </dialog>
+
+<div class="pop" id="pop" role="dialog" aria-label="Filtro de columna" hidden></div>
 
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
@@ -322,7 +345,6 @@ const CATALOGOS = {
     descripcion: 'Líneas de telefonía, internet y GPS. Se actualizan cargando la radiografía de Telcel.',
     tabla: 'lineas', select: '*', orden: 'telefono',
     accion: { texto: 'Cargar radiografía', fn: () => abrirCarga() },
-    filtro: { k: 'tipo_linea', todos: 'Todos los tipos', opciones: TIPOS_LINEA },
     resumen: filas => {
       const act = filas.filter(r => r.estatus !== 'BAJA');
       const por = t => act.filter(r => r.tipo_linea === t).length;
@@ -336,11 +358,11 @@ const CATALOGOS = {
       { t: 'Teléfono', v: r => r.telefono, clase: 'mono' },
       { t: 'Tipo', v: r => TIPOS_LINEA[r.tipo_linea], chip: true },
       { t: 'Plan', v: r => r.plan },
-      { t: 'Renta', v: r => fmtMoneda(r.renta_mensual), clase: 'mono' },
+      { t: 'Renta', v: r => fmtMoneda(r.renta_mensual), ord: r => r.renta_mensual, clase: 'mono' },
       { t: 'Esquema', v: r => r.tipo_esquema === 'Plazo Forzoso con Equipo' ? `Plazo forzoso (${r.meses_restantes ?? '?'} meses)` : r.tipo_esquema },
-      { t: 'Fin de plazo', v: r => fmtFecha(r.fecha_fin_servicio), clase: 'mono' },
+      { t: 'Fin de plazo', v: r => fmtFecha(r.fecha_fin_servicio), ord: r => r.fecha_fin_servicio, clase: 'mono' },
       { t: 'Equipo según Telcel', v: r => r.equipo_radiografia },
-      { t: 'Estatus', v: r => r.estatus === 'ACTIVA' ? '' : ESTATUS_LINEA[r.estatus], chip: 'alerta' },
+      { t: 'Estatus', v: r => ESTATUS_LINEA[r.estatus], chip: r => r.estatus === 'ACTIVA' ? true : 'alerta' },
     ],
     campos: [
       { k: 'telefono', t: 'Teléfono', req: true, soloLecturaEditar: true, patron: /^\d{10}$/, msgPatron: 'Deben ser 10 dígitos, sin espacios.' },
@@ -590,6 +612,7 @@ $('nav').addEventListener('click', e => {
 });
 
 function mostrar(key) {
+  cerrarPop();
   actual = key;
   const cat = CATALOGOS[key];
   pintarNav();
@@ -616,41 +639,223 @@ function mostrar(key) {
 $('btnAccion').addEventListener('click', () => CATALOGOS[actual].accion?.fn());
 $('filtroExtra').addEventListener('change', () => pintarTabla());
 
-function pintarTabla() {
-  const cat = CATALOGOS[actual];
+/* ---------- Filtros por columna (tipo Excel) ---------- */
+const filtrosCol = {};   // por catálogo: { índiceColumna: Set(valores permitidos) }
+const ordenCol = {};     // por catálogo: { idx, dir: 1 | -1 }
+const VACIO = '(Vacías)';
+const ICONOS = {
+  menu:   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6l4 4 4-4"/></svg>',
+  filtro: '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M2 3h12l-4.5 5.2V13l-3 1.5V8.2z"/></svg>',
+  asc:    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 13V3M4 7l4-4 4 4"/></svg>',
+  desc:   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 3v10M4 9l4 4 4-4"/></svg>',
+};
+const valorCol = (c, r) => { const v = c.v(r); return v == null || v === '' ? VACIO : String(v); };
+
+function filasFiltradas(cat, excluirIdx = -1) {
   const estado = $('filtroEstado').value;
   const q = $('buscar').value.trim().toLowerCase();
-  const editable = puedeEscribir(cat);
-
-  const filas = (datos[actual] || [])
+  const fc = filtrosCol[actual] || {};
+  return (datos[actual] || [])
     .filter(r => estado === 'todos' || (estado === 'activos' ? r.activo : !r.activo))
     .filter(r => !cat.filtro || !$('filtroExtra').value || r[cat.filtro.k] === $('filtroExtra').value)
-    .filter(r => !q || cat.columnas.map(c => c.v(r) ?? '').join(' ').toLowerCase().includes(q));
+    .filter(r => !q || cat.columnas.map(c => c.v(r) ?? '').join(' ').toLowerCase().includes(q))
+    .filter(r => Object.entries(fc).every(([i, set]) => Number(i) === excluirIdx || set.has(valorCol(cat.columnas[i], r))));
+}
 
-  if (!filas.length) {
-    const total = (datos[actual] || []).length;
-    const msg = q ? `Ningún registro coincide con "${esc($('buscar').value)}".`
-      : total ? 'No hay registros con este filtro.'
-      : `Aún no hay ${cat.titulo.toLowerCase()} registrados.`;
-    const cta = !q && !total && cat.nuevo && editable
-      ? `<br><button class="btn" type="button" onclick="abrir()">${esc(cat.nuevo)}</button>` : '';
-    $('tablaWrap').innerHTML = `<div class="vacio">${msg}${cta}</div>`;
+function comparar(x, y) {
+  const vx = x == null || x === '', vy = y == null || y === '';
+  if (vx || vy) return vx === vy ? 0 : (vx ? 1 : -1);
+  const nx = Number(x), ny = Number(y);
+  if (!isNaN(nx) && !isNaN(ny)) return nx - ny;
+  return String(x).localeCompare(String(y), 'es', { numeric: true, sensitivity: 'base' });
+}
+
+function pintarTabla() {
+  const cat = CATALOGOS[actual];
+  const editable = puedeEscribir(cat);
+  const total = (datos[actual] || []).length;
+  const fc = filtrosCol[actual] || {};
+  const hayFiltrosCol = Object.keys(fc).length > 0;
+  $('btnQuitarFiltros').hidden = !hayFiltrosCol;
+
+  if (!total) {
+    $('conteo').textContent = '';
+    const cta = cat.nuevo && editable ? `<br><button class="btn" type="button" onclick="abrir()">${esc(cat.nuevo)}</button>` : '';
+    $('tablaWrap').innerHTML = `<div class="vacio">Aún no hay ${cat.titulo.toLowerCase()} registrados.${cta}</div>`;
     return;
   }
 
-  $('tablaWrap').innerHTML = `<table>
-    <thead><tr>${cat.columnas.map(c => `<th scope="col">${esc(c.t)}</th>`).join('')}<th scope="col"><span class="sr" style="position:absolute;left:-9999px">Estado</span></th></tr></thead>
-    <tbody>${filas.map(r => `
+  const filas = filasFiltradas(cat);
+  const o = ordenCol[actual];
+  if (o) {
+    const c = cat.columnas[o.idx];
+    const clave = r => c.ord ? c.ord(r) : c.v(r);
+    filas.sort((a, b) => {
+      const ka = clave(a), kb = clave(b);
+      const vacios = (ka == null || ka === '') - (kb == null || kb === '');
+      return vacios || o.dir * comparar(ka, kb);   // vacías siempre al final
+    });
+  }
+  $('conteo').textContent = filas.length === total ? `${total} registros` : `Mostrando ${filas.length} de ${total}`;
+
+  const cabeza = cat.columnas.map((c, i) => {
+    const filtrada = !!fc[i];
+    const ordenada = o && o.idx === i;
+    const ico = filtrada ? ICONOS.filtro : ordenada ? (o.dir === 1 ? ICONOS.asc : ICONOS.desc) : ICONOS.menu;
+    const estado = [filtrada ? 'filtrada' : '', ordenada ? (o.dir === 1 ? 'orden ascendente' : 'orden descendente') : ''].filter(Boolean).join(', ');
+    return `<th scope="col"${ordenada ? ` aria-sort="${o.dir === 1 ? 'ascending' : 'descending'}"` : ''}>
+      <button type="button" class="th-btn${filtrada || ordenada ? ' activo' : ''}" data-col="${i}" aria-haspopup="dialog"
+        aria-label="${esc(c.t)}: filtrar y ordenar${estado ? ` (${estado})` : ''}">${esc(c.t)}<span class="th-ico" aria-hidden="true">${ico}</span></button></th>`;
+  }).join('');
+
+  const cuerpo = filas.length ? filas.map(r => `
       <tr class="${editable ? 'editable' : ''} ${r.activo ? '' : 'inactivo'}" data-id="${esc(r.id)}" ${editable ? 'tabindex="0"' : ''}>
         ${cat.columnas.map(c => {
           const v = c.v(r);
-          const cont = c.chip && v ? `<span class="chip${c.chip === 'alerta' ? ' chip-alerta' : ''}">${esc(v)}</span>` : esc(v);
+          const chip = typeof c.chip === 'function' ? c.chip(r) : c.chip;
+          const cont = chip && v ? `<span class="chip${chip === 'alerta' ? ' chip-alerta' : ''}">${esc(v)}</span>` : esc(v);
           return `<td class="${c.clase || ''}">${cont}</td>`;
         }).join('')}
         <td>${r.activo ? '' : '<span class="chip chip-inactivo">Inactivo</span>'}</td>
-      </tr>`).join('')}
-    </tbody></table>`;
+      </tr>`).join('')
+    : `<tr><td colspan="${cat.columnas.length + 1}" class="vacio">Ningún registro coincide con los filtros.
+        ${hayFiltrosCol ? '<br><button class="btn btn-sec btn-chico" type="button" onclick="quitarFiltros()">Quitar filtros de columnas</button>' : ''}</td></tr>`;
+
+  $('tablaWrap').innerHTML = `<table>
+    <thead><tr>${cabeza}<th scope="col"><span style="position:absolute;left:-9999px">Estado</span></th></tr></thead>
+    <tbody>${cuerpo}</tbody></table>`;
 }
+
+function quitarFiltros() {
+  delete filtrosCol[actual];
+  pintarTabla();
+}
+$('btnQuitarFiltros').addEventListener('click', quitarFiltros);
+
+/* ---------- Ventana de filtro de una columna ---------- */
+let popCol = null;
+
+function abrirPop(idx, boton) {
+  const cat = CATALOGOS[actual];
+  const c = cat.columnas[idx];
+  popCol = { idx, boton };
+  const base = filasFiltradas(cat, idx);
+  const conteos = new Map();
+  const claves = new Map();   // valor mostrado → valor real para ordenar (números, fechas)
+  base.forEach(r => {
+    const v = valorCol(c, r);
+    conteos.set(v, (conteos.get(v) || 0) + 1);
+    if (!claves.has(v)) claves.set(v, c.ord ? c.ord(r) : v);
+  });
+  const sel = (filtrosCol[actual] || {})[idx];
+  if (sel) sel.forEach(v => { if (!conteos.has(v)) { conteos.set(v, 0); claves.set(v, v); } });
+  const valores = [...conteos.keys()].sort((a, b) =>
+    a === VACIO ? 1 : b === VACIO ? -1 : comparar(claves.get(a), claves.get(b)));
+  const o = ordenCol[actual];
+
+  const pop = $('pop');
+  pop.innerHTML = `
+    <div class="pop-ord">
+      <button type="button" data-ord="1" aria-pressed="${!!(o && o.idx === idx && o.dir === 1)}"><span class="th-ico" aria-hidden="true">${ICONOS.asc}</span>Ordenar ascendente</button>
+      <button type="button" data-ord="-1" aria-pressed="${!!(o && o.idx === idx && o.dir === -1)}"><span class="th-ico" aria-hidden="true">${ICONOS.desc}</span>Ordenar descendente</button>
+    </div>
+    <div class="pop-cuerpo">
+      <input type="search" id="popBuscar" placeholder="Buscar en ${esc(c.t.toLowerCase())}" aria-label="Buscar valor">
+      <label class="pop-op pop-todos"><input type="checkbox" id="popTodos"> (Seleccionar todo)</label>
+      <div class="pop-lista" id="popLista">
+        ${valores.map(v => `<label class="pop-op" data-v="${esc(v)}">
+          <input type="checkbox" value="${esc(v)}" ${!sel || sel.has(v) ? 'checked' : ''}>
+          <span>${esc(v)}</span><span class="n">${conteos.get(v)}</span></label>`).join('')}
+      </div>
+    </div>
+    <div class="pop-pie">
+      <button type="button" class="btn btn-sec btn-chico" id="popQuitar">Quitar filtro</button>
+      <button type="button" class="btn btn-chico" id="popAplicar">Aplicar</button>
+    </div>`;
+  pop.hidden = false;
+
+  const r = boton.getBoundingClientRect();
+  const ancho = pop.offsetWidth;
+  pop.style.left = `${Math.max(8, Math.min(r.left, innerWidth - ancho - 8))}px`;
+  pop.style.top = `${r.bottom + 6}px`;
+  pop.style.maxHeight = `${innerHeight - r.bottom - 16}px`;
+  const lista = $('popLista');
+  lista.style.maxHeight = `${Math.max(120, Math.min(240, innerHeight - r.bottom - 230))}px`;
+
+  const visibles = () => [...lista.querySelectorAll('.pop-op')].filter(l => !l.hidden).map(l => l.querySelector('input'));
+  const syncTodos = () => {
+    const vis = visibles();
+    const marcados = vis.filter(i => i.checked).length;
+    $('popTodos').checked = vis.length > 0 && marcados === vis.length;
+    $('popTodos').indeterminate = marcados > 0 && marcados < vis.length;
+    $('popAplicar').disabled = !lista.querySelector('.pop-op:not([hidden]) input:checked');
+  };
+  syncTodos();
+
+  $('popBuscar').addEventListener('input', e => {
+    const t = e.target.value.trim().toLowerCase();
+    lista.querySelectorAll('.pop-op').forEach(l => {
+      l.hidden = !!t && !l.dataset.v.toLowerCase().includes(t);
+      if (t) l.querySelector('input').checked = !l.hidden;   // como Excel: al buscar se marcan las coincidencias
+    });
+    syncTodos();
+  });
+  $('popTodos').addEventListener('change', e => { visibles().forEach(i => (i.checked = e.target.checked)); syncTodos(); });
+  lista.addEventListener('change', syncTodos);
+
+  pop.querySelectorAll('[data-ord]').forEach(b => b.addEventListener('click', () => {
+    const dir = Number(b.dataset.ord);
+    const actualOrd = ordenCol[actual];
+    ordenCol[actual] = actualOrd && actualOrd.idx === idx && actualOrd.dir === dir ? null : { idx, dir };
+    cerrarPop(); pintarTabla();
+  }));
+  $('popQuitar').addEventListener('click', () => {
+    if (filtrosCol[actual]) delete filtrosCol[actual][idx];
+    if (filtrosCol[actual] && !Object.keys(filtrosCol[actual]).length) delete filtrosCol[actual];
+    cerrarPop(); pintarTabla();
+  });
+  $('popAplicar').addEventListener('click', () => {
+    const buscando = !!$('popBuscar').value.trim();
+    const elegidos = [...lista.querySelectorAll('.pop-op')]
+      .filter(l => (!buscando || !l.hidden) && l.querySelector('input').checked)
+      .map(l => l.dataset.v);
+    filtrosCol[actual] = filtrosCol[actual] || {};
+    if (elegidos.length === valores.length) delete filtrosCol[actual][idx];
+    else filtrosCol[actual][idx] = new Set(elegidos);
+    if (!Object.keys(filtrosCol[actual]).length) delete filtrosCol[actual];
+    cerrarPop(); pintarTabla();
+  });
+
+  $('popBuscar').focus();
+}
+
+function cerrarPop(devolverFoco = false) {
+  if ($('pop').hidden) return;
+  $('pop').hidden = true;
+  if (devolverFoco && popCol) {
+    const b = $('tablaWrap').querySelector(`.th-btn[data-col="${popCol.idx}"]`);
+    b?.focus();
+  }
+  popCol = null;
+}
+
+$('tablaWrap').addEventListener('click', e => {
+  const b = e.target.closest('.th-btn');
+  if (!b) return;
+  e.stopPropagation();
+  const idx = Number(b.dataset.col);
+  if (popCol && popCol.idx === idx) { cerrarPop(); return; }
+  abrirPop(idx, b);
+});
+document.addEventListener('mousedown', e => {
+  if (!$('pop').hidden && !$('pop').contains(e.target) && !e.target.closest('.th-btn')) cerrarPop();
+});
+$('pop').addEventListener('keydown', e => {
+  if (e.key === 'Escape') { e.stopPropagation(); cerrarPop(true); }
+  if (e.key === 'Enter' && e.target.id === 'popBuscar' && !$('popAplicar').disabled) $('popAplicar').click();
+});
+document.querySelector('main').addEventListener('scroll', () => cerrarPop());
+window.addEventListener('resize', () => cerrarPop());
 
 $('buscar').addEventListener('input', pintarTabla);
 $('filtroEstado').addEventListener('change', pintarTabla);
