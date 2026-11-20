@@ -389,7 +389,7 @@ const textoASpecs = t => {
 };
 
 const TIPOS_LINEA = { TELEFONIA: 'Telefonía', INTERNET: 'Internet', GPS: 'GPS' };
-const CATEGORIAS = { COMPUTO: 'Cómputo', CELULARES: 'Celulares', PERIFERICOS: 'Periféricos', SUMINISTROS: 'Suministros' };
+const CATEGORIAS = { COMPUTO: 'Cómputo', CELULARES: 'Celulares' };
 const CONDICION_EQUIPO = { DISPONIBLE: 'Disponible', ASIGNADO: 'Asignado', SIN_DEFINIR: 'Sin definir' };
 const TIPOS_COLAB = { COLABORADOR: 'Colaborador', JEFE_AREA: 'Jefe de área' };
 const CONDICION_LINEA = { DISPONIBLE: 'Disponible', ASIGNADA: 'Asignada', SIN_DEFINIR: 'Sin definir' };
@@ -718,21 +718,13 @@ const ROLES = { ADMIN: 'Administrador', TI: 'Sistemas', CONSULTA: 'Consulta' };
 /* Inventarios por categoría: comparten la tabla de equipos y se filtran por la categoría del tipo */
 const VISTAS_EQUIPOS = {
   computo: { categoria: 'COMPUTO', titulo: 'Cómputo',
-    descripcion: 'Laptops, equipos de escritorio, armados y tablets.',
-    cols: ['Tipo', 'Marca y modelo', 'Descripción', 'Serie', 'Origen', 'Centro de costo', 'Proveedor', 'Factura / remisión',
+    descripcion: 'Laptops, equipos de escritorio y armados, periféricos y suministros. Usa el filtro de la columna Tipo para ver uno en particular.',
+    cols: ['Tipo', 'Marca y modelo', 'Descripción', 'Serie', 'Cant.', 'Origen', 'Centro de costo', 'Proveedor', 'Factura / remisión',
            'Fecha compra', 'Costo s/IVA', 'Costo c/IVA', 'Precio empleado', 'Condición', 'Estatus'] },
   celulares: { categoria: 'CELULARES', titulo: 'Celulares', conImei: true,
     descripcion: 'Teléfonos celulares con su IMEI.',
     cols: ['Marca y modelo', 'Descripción', 'IMEI', 'Serie', 'Centro de costo', 'Proveedor', 'Factura / remisión',
            'Fecha compra', 'Costo s/IVA', 'Costo c/IVA', 'Precio empleado', 'Condición', 'Estatus'] },
-  perifericos: { categoria: 'PERIFERICOS', titulo: 'Periféricos',
-    descripcion: 'Monitores, teclados, mouse, impresoras y demás accesorios.',
-    cols: ['Tipo', 'Marca y modelo', 'Descripción', 'Serie', 'Cant.', 'Centro de costo', 'Proveedor', 'Factura / remisión',
-           'Fecha compra', 'Costo s/IVA', 'Costo c/IVA', 'Precio empleado', 'Condición', 'Estatus'] },
-  suministros: { categoria: 'SUMINISTROS', titulo: 'Suministros',
-    descripcion: 'Tóner, refacciones y materiales sobrantes de armados, por cantidad.',
-    cols: ['Tipo', 'Descripción', 'Marca y modelo', 'Cant.', 'Origen', 'Centro de costo', 'Proveedor', 'Factura / remisión',
-           'Fecha compra', 'Costo s/IVA', 'Costo c/IVA', 'Condición', 'Estatus'] },
 };
 (function crearInventarios() {
   const base = CATALOGOS.equipos;
