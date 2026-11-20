@@ -389,6 +389,7 @@ const textoASpecs = t => {
 };
 
 const TIPOS_LINEA = { TELEFONIA: 'Telefonía', INTERNET: 'Internet', GPS: 'GPS' };
+const CATEGORIAS = { COMPUTO: 'Cómputo', CELULARES: 'Celulares', PERIFERICOS: 'Periféricos', SUMINISTROS: 'Suministros' };
 const CONDICION_EQUIPO = { DISPONIBLE: 'Disponible', ASIGNADO: 'Asignado', SIN_DEFINIR: 'Sin definir' };
 const TIPOS_COLAB = { COLABORADOR: 'Colaborador', JEFE_AREA: 'Jefe de área' };
 const CONDICION_LINEA = { DISPONIBLE: 'Disponible', ASIGNADA: 'Asignada', SIN_DEFINIR: 'Sin definir' };
@@ -444,7 +445,7 @@ const CATALOGOS = {
   },
 
   equipos: {
-    grupo: 'Inventario',
+    grupo: 'Inventario', oculto: true,
     titulo: 'Equipos', singular: 'equipo', nuevo: 'Nuevo equipo', sinActivo: true, sinColEstado: true,
     descripcion: 'Laptops, celulares, monitores, suministros y equipos armados. Se dan de alta desde la factura XML o la remisión.',
     tabla: 'equipos', orden: 'id',
@@ -525,7 +526,7 @@ const CATALOGOS = {
   compras: {
     grupo: 'Inventario',
     titulo: 'Compras', singular: 'compra', nuevo: null, soloLectura: true, siempreActivo: true, sinColEstado: true,
-    descripcion: 'Facturas XML y remisiones registradas. Para dar de alta una nueva, usa Cargar XML o Registrar remisión en Equipos.',
+    descripcion: 'Facturas XML y remisiones registradas. Para dar de alta una nueva, usa Cargar XML o Registrar remisión en cualquier inventario.',
     tabla: 'compras', orden: 'fecha',
     select: 'id, origen, folio, uuid, fecha, moneda, subtotal, iva, total, envio, archivo, created_at, proveedores(razon_social, rfc)',
     columnas: [
@@ -643,9 +644,11 @@ const CATALOGOS = {
     titulo: 'Tipos de equipo', singular: 'tipo', nuevo: 'Nuevo tipo',
     descripcion: 'El tipo define si un equipo se controla pieza por pieza o por cantidad, y si requiere resguardo.',
     tabla: 'tipos_equipo', select: '*', orden: 'nombre',
+    porDefecto: { categoria: 'COMPUTO' },
     columnas: [
       { t: 'Clave', v: r => r.clave, clase: 'mono' },
       { t: 'Nombre', v: r => r.nombre },
+      { t: 'Inventario', v: r => CATEGORIAS[r.categoria] },
       { t: 'Control', v: r => CONTROLES[controlDe(r)].etiqueta, chip: true },
       { t: 'Resguardo', v: r => r.requiere_resguardo ? 'Sí' : 'No' },
       { t: 'Vida útil', v: r => r.vida_util_meses ? `${r.vida_util_meses} meses` : '' },
@@ -653,6 +656,8 @@ const CATALOGOS = {
     campos: [
       { k: 'clave', t: 'Clave', req: true, mayus: true, patron: /^[A-Z0-9_]{2,20}$/, msgPatron: 'Solo letras, números y guion bajo, sin espacios.', ayuda: 'Identificador corto, ej. LAPTOP.' },
       { k: 'nombre', t: 'Nombre', req: true },
+      { k: 'categoria', t: 'Inventario al que pertenece', req: true, tipo: 'select', opciones: () => Object.entries(CATEGORIAS),
+        ayuda: 'Si lo cambias, todos los equipos de este tipo se mueven a ese inventario.' },
       { k: '_control', t: 'Cómo se controla', tipo: 'control' },
       { k: 'requiere_resguardo', t: 'Genera resguardo al asignarse', tipo: 'check' },
       { k: 'vida_util_meses', t: 'Vida útil (meses)', tipo: 'number', ayuda: 'Opcional. Servirá para avisar de equipos por renovar.' },
@@ -710,6 +715,53 @@ const CATALOGOS = {
 
 const ROLES = { ADMIN: 'Administrador', TI: 'Sistemas', CONSULTA: 'Consulta' };
 
+/* Inventarios por categoría: comparten la tabla de equipos y se filtran por la categoría del tipo */
+const VISTAS_EQUIPOS = {
+  computo: { categoria: 'COMPUTO', titulo: 'Cómputo',
+    descripcion: 'Laptops, equipos de escritorio, armados y tablets.',
+    cols: ['Tipo', 'Marca y modelo', 'Descripción', 'Serie', 'Origen', 'Centro de costo', 'Proveedor', 'Factura / remisión',
+           'Fecha compra', 'Costo s/IVA', 'Costo c/IVA', 'Precio empleado', 'Condición', 'Estatus'] },
+  celulares: { categoria: 'CELULARES', titulo: 'Celulares', conImei: true,
+    descripcion: 'Teléfonos celulares con su IMEI.',
+    cols: ['Marca y modelo', 'Descripción', 'IMEI', 'Serie', 'Centro de costo', 'Proveedor', 'Factura / remisión',
+           'Fecha compra', 'Costo s/IVA', 'Costo c/IVA', 'Precio empleado', 'Condición', 'Estatus'] },
+  perifericos: { categoria: 'PERIFERICOS', titulo: 'Periféricos',
+    descripcion: 'Monitores, teclados, mouse, impresoras y demás accesorios.',
+    cols: ['Tipo', 'Marca y modelo', 'Descripción', 'Serie', 'Cant.', 'Centro de costo', 'Proveedor', 'Factura / remisión',
+           'Fecha compra', 'Costo s/IVA', 'Costo c/IVA', 'Precio empleado', 'Condición', 'Estatus'] },
+  suministros: { categoria: 'SUMINISTROS', titulo: 'Suministros',
+    descripcion: 'Tóner, refacciones y materiales sobrantes de armados, por cantidad.',
+    cols: ['Tipo', 'Descripción', 'Marca y modelo', 'Cant.', 'Origen', 'Centro de costo', 'Proveedor', 'Factura / remisión',
+           'Fecha compra', 'Costo s/IVA', 'Costo c/IVA', 'Condición', 'Estatus'] },
+};
+(function crearInventarios() {
+  const base = CATALOGOS.equipos;
+  const entradas = Object.entries(CATALOGOS);
+  Object.keys(CATALOGOS).forEach(k => delete CATALOGOS[k]);
+  entradas.forEach(([k, v]) => {
+    CATALOGOS[k] = v;
+    if (k !== 'equipos') return;
+    Object.entries(VISTAS_EQUIPOS).forEach(([vk, vista]) => {
+      CATALOGOS[vk] = {
+        ...base, oculto: false, fuente: 'equipos', categoria: vista.categoria,
+        titulo: vista.titulo, descripcion: vista.descripcion,
+        columnas: vista.cols.map(t => base.columnas.find(c => c.t === t)),
+        campos: base.campos
+          .filter(c => c.k !== 'imei' || vista.conImei)
+          .map(c => c.k !== 'tipo_id' ? c : { ...c,
+            opciones: r => aux.tiposFull.filter(x => (x.categoria === vista.categoria && x.activo) || x.id === r.tipo_id).map(x => [x.id, x.nombre]) }),
+      };
+    });
+  });
+})();
+
+// Renglones que muestra un catálogo (los inventarios filtran la tabla de equipos por categoría)
+function filasDe(key) {
+  const cat = CATALOGOS[key];
+  if (!cat.fuente) return datos[key] || [];
+  return (datos[cat.fuente] || []).filter(r => (tipoPorId(r.tipo_id)?.categoria || 'COMPUTO') === cat.categoria);
+}
+
 /* =========================================================
    3. ESTADO
    ========================================================= */
@@ -753,7 +805,7 @@ async function entrar(session) {
   $('quienSoy').textContent = `${perfil.nombre} (${ROLES[perfil.rol]})`;
   $('vistaLogin').hidden = true;
   $('vistaApp').hidden = false;
-  await Promise.all([...Object.keys(CATALOGOS).map(cargar), cargarAux()]);
+  await Promise.all([...Object.keys(CATALOGOS).filter(k => !CATALOGOS[k].fuente).map(cargar), cargarAux()]);
   mostrar(actual);
 }
 
@@ -804,6 +856,7 @@ $('btnSalir').addEventListener('click', async () => {
    ========================================================= */
 async function cargar(key) {
   const cat = CATALOGOS[key];
+  if (cat.fuente) return cargar(cat.fuente);
   const BLOQUE = 1000;   // Supabase entrega máximo 1000 renglones por consulta
   let todo = [];
   for (let desde = 0; ; desde += BLOQUE) {
@@ -830,7 +883,7 @@ async function cargarAux() {
     sb.from('colaboradores').select('id,nombre,apellidos,num_empleado,area,activo,tipo_colaborador').order('nombre'),
   ]);
   const [tf, mo, pr, mb] = await Promise.all([
-    sb.from('tipos_equipo').select('id,nombre,clave,requiere_serie,requiere_imei,es_consumible,activo').order('nombre'),
+    sb.from('tipos_equipo').select('id,nombre,clave,categoria,requiere_serie,requiere_imei,es_consumible,activo').order('nombre'),
     sb.from('modelos').select('id,nombre,marca_id,tipo_id,activo,marcas(nombre)').order('nombre'),
     sb.from('proveedores').select('id,rfc,razon_social,activo').order('razon_social'),
     sb.from('motivos_baja').select('id,nombre,activo').order('nombre'),
@@ -878,8 +931,8 @@ function traducirError(err) {
    ========================================================= */
 function pintarNav() {
   let grupo = '';
-  $('nav').innerHTML = Object.entries(CATALOGOS).map(([key, cat]) => {
-    const activos = (datos[key] || []).filter(r => r.activo).length;
+  $('nav').innerHTML = Object.entries(CATALOGOS).filter(([, cat]) => !cat.oculto).map(([key, cat]) => {
+    const activos = filasDe(key).filter(r => r.activo).length;
     const cab = cat.grupo !== grupo ? `<div class="nav-grupo">${esc(grupo = cat.grupo)}</div>` : '';
     return `${cab}<button class="nav-item" type="button" data-key="${key}" ${key === actual ? 'aria-current="page"' : ''}>
       <span>${esc(cat.titulo)}</span><span class="cuenta">${activos}</span></button>`;
@@ -914,7 +967,7 @@ function mostrar(key) {
     : '';
   const res = $('resumen');
   res.hidden = !cat.resumen;
-  res.innerHTML = cat.resumen ? cat.resumen(datos[key] || []).map(t => `<span>${esc(t)}</span>`).join('') : '';
+  res.innerHTML = cat.resumen ? cat.resumen(filasDe(key)).map(t => `<span>${esc(t)}</span>`).join('') : '';
   pintarTabla();
 }
 $('accionesExtra').addEventListener('click', e => {
@@ -940,7 +993,7 @@ function filasFiltradas(cat, excluirIdx = -1) {
   const estado = $('filtroEstado').value;
   const q = $('buscar').value.trim().toLowerCase();
   const fc = filtrosCol[actual] || {};
-  return (datos[actual] || [])
+  return filasDe(actual)
     .filter(r => estado === 'todos' || (estado === 'activos' ? r.activo : !r.activo))
     .filter(r => !cat.filtro || !$('filtroExtra').value || r[cat.filtro.k] === $('filtroExtra').value)
     .filter(r => !q || cat.columnas.map(c => c.v(r) ?? '').join(' ').toLowerCase().includes(q))
@@ -958,7 +1011,7 @@ function comparar(x, y) {
 function pintarTabla() {
   const cat = CATALOGOS[actual];
   const editable = puedeEscribir(cat);
-  const total = (datos[actual] || []).length;
+  const total = filasDe(actual).length;
   const fc = filtrosCol[actual] || {};
   const hayFiltrosCol = Object.keys(fc).length > 0;
   $('btnQuitarFiltros').hidden = !hayFiltrosCol;
@@ -1201,12 +1254,12 @@ $('btnNuevo').addEventListener('click', () => abrir());
 $('tablaWrap').addEventListener('click', e => {
   if (e.target.closest('.col-sel')) return;
   const tr = e.target.closest('tr.editable');
-  if (tr) abrir(datos[actual].find(r => String(r.id) === tr.dataset.id));
+  if (tr) abrir(filasDe(actual).find(r => String(r.id) === tr.dataset.id));
 });
 $('tablaWrap').addEventListener('keydown', e => {
   if (e.key !== 'Enter' || e.target.closest('.col-sel')) return;
   const tr = e.target.closest('tr.editable');
-  if (tr) abrir(datos[actual].find(r => String(r.id) === tr.dataset.id));
+  if (tr) abrir(filasDe(actual).find(r => String(r.id) === tr.dataset.id));
 });
 
 /* =========================================================
@@ -1830,7 +1883,7 @@ function calcularCompra() {
 
 const opcionesHTML = (lista, valor, vacio) =>
   `<option value="">${esc(vacio)}</option>` + lista.map(([v, t]) => `<option value="${esc(v)}" ${String(v) === String(valor ?? '') ? 'selected' : ''}>${esc(t)}</option>`).join('');
-const optTipos = () => aux.tiposFull.filter(t => t.activo).map(t => [t.id, t.nombre]);
+const optTipos = () => aux.tiposFull.filter(t => t.activo).map(t => [t.id, `${t.nombre} · ${CATEGORIAS[t.categoria] || ''}`]);
 const optMarcas = () => aux.marcas.map(m => [m.id, m.nombre]);
 const optModelos = (marca, tipo) => aux.modelos.filter(m => m.activo && (!marca || String(m.marca_id) === String(marca)) && (!tipo || String(m.tipo_id) === String(tipo)))
   .map(m => [m.id, marca ? m.nombre : `${m.marca} ${m.nombre}`]);
@@ -2226,7 +2279,7 @@ async function guardarCompra() {
   toast(`Compra registrada: ${data.equipos} equipo(s), ${data.armados} armado(s), ${data.materiales} material(es) a stock.`);
   cerrarPanel();
   await Promise.all([cargar('equipos'), cargar('compras'), cargar('proveedores'), cargarAux()]);
-  mostrar('equipos');
+  mostrar(CATALOGOS[actual]?.fuente === 'equipos' ? actual : 'computo');
 }
 
 // Captura de datos del asistente
