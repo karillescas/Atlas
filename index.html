@@ -555,7 +555,7 @@ const CATALOGOS = {
     titulo: 'Resguardos', singular: 'resguardo', nuevo: 'Nuevo resguardo', sinActivo: true, sinColEstado: true,
     descripcion: 'Resguardos de celulares y líneas: normal, con diferencia y monitoreado. Abre uno para imprimirlo, registrar su devolución o transferirlo.',
     tabla: 'resguardos', orden: 'id',
-    select: '*, lineas(telefono, plan), equipos(descripcion, imei, num_serie, costo_con_iva, precio_empleado, marcas(nombre), modelos(nombre))',
+    select: '*, lineas(telefono, plan, iccid, esim, operador), equipos(descripcion, imei, num_serie, costo_con_iva, precio_empleado, marcas(nombre), modelos(nombre))',
     nuevoFn: () => abrirResguardo(),
     verFn: r => verResguardo(r),
     resumen: filas => {
@@ -2380,7 +2380,8 @@ const EMPRESA = {
   lugar: 'SANTA CRUZ XOXOCOTLÁN, OAXACA, OAX.',
 };
 const TIPOS_RESGUARDO = {
-  NORMAL: { t: 'Normal', d: 'Sin cargo para el colaborador. Puede ser solo línea, solo celular o ambos.' },
+  NORMAL: { t: 'Normal', d: 'Celular sin cargo para el colaborador, con o sin línea.' },
+  LINEA: { t: 'Solo línea (chip)', d: 'Se entrega únicamente la línea o chip, sin celular de la empresa. Incluye condiciones de uso de la línea.' },
   DIFERENCIA: { t: 'Con diferencia', d: 'El colaborador paga el precio empleado por nómina y al terminar el plazo el celular pasa a ser suyo.' },
   MONITOREADO: { t: 'Monitoreado', d: 'Línea y celular obligatorios. El colaborador acepta que el equipo sea monitoreado.' },
 };
@@ -2459,7 +2460,7 @@ function abrirResguardo() {
   res = { tipo: 'NORMAL', colaborador_id: '', linea_id: '', equipo_id: '', incluirTodos: false,
           fecha_entrega: hoyISO(), plazo_meses: '24', equipo_nuevo: true, color: '', accesorios: '', estado_fisico: '',
           estado_funcional: '', danos_preexistentes: '', valor_equipo: '', entrega_nombre: perfil?.nombre || '', observaciones: '',
-          monto_diferencia: '', parcialidades: '', acepta_monitoreo: false };
+          monto_diferencia: '', parcialidades: '', acepta_monitoreo: false, equipo_personal: '' };
   $('panel').classList.add('ancho');
   $('panelTitulo').textContent = 'Nuevo resguardo';
   $('btnCancelar').textContent = 'Cancelar';
@@ -2527,9 +2528,10 @@ function pintarResguardo(errores = []) {
     </dl>${faltan.length ? `<p class="nota">Al colaborador le falta ${faltan.join(' y ')}; el documento lo dejará en blanco. Puedes completarlo en Colaboradores.</p>` : ''}`;
   }
 
+  const soloLinea = res.tipo === 'LINEA';
   html += `<div class="rejilla" style="margin-top:1rem">
-    ${buscadorHTML('linea_id', `Línea${res.tipo === 'MONITOREADO' ? ' *' : ''}`, opsLin, res.linea_id, 'No hay líneas disponibles que coincidan.', 'Solo líneas de telefonía activas y sin resguardo.')}
-    ${buscadorHTML('equipo_id', `Celular${res.tipo !== 'NORMAL' ? ' *' : ''}`, opsCel, res.equipo_id, 'No hay celulares disponibles que coincidan.', 'Solo celulares activos y sin resguardo.')}
+    ${buscadorHTML('linea_id', `Línea${soloLinea || res.tipo === 'MONITOREADO' ? ' *' : ''}`, opsLin, res.linea_id, 'No hay líneas disponibles que coincidan.', 'Solo líneas de telefonía activas y sin resguardo.')}
+    ${soloLinea ? '' : buscadorHTML('equipo_id', 'Celular *', opsCel, res.equipo_id, 'No hay celulares disponibles que coincidan.', 'Solo celulares activos y sin resguardo.')}
   </div>
   <label class="opcion"><input type="checkbox" data-r="incluirTodos" ${res.incluirTodos ? 'checked' : ''}>
     <span>Mostrar también los que no tienen resguardo aunque estén marcados como asignados o sin definir
@@ -2561,8 +2563,8 @@ function pintarResguardo(errores = []) {
     </div>`;
   }
   html += `<h3 class="sub">Lo que se entrega</h3><div class="rejilla">
-    ${rTxt('color', 'Color')}
-    ${rArea('accesorios', 'Accesorios', 'Cargador, cable, funda…')}
+    ${soloLinea ? rTxt('equipo_personal', 'Equipo en el que se usará el chip', 'placeholder="Ej. iPhone 13 personal"') : `${rTxt('color', 'Color')}
+    ${rArea('accesorios', 'Accesorios', 'Cargador, cable, funda…')}`}
     ${res.tipo === 'MONITOREADO' ? `${rTxt('valor_equipo', 'Costo / valor de referencia', 'type="number" min="0" step="0.01"')}
       ${rTxt('estado_fisico', 'Estado físico')}${rTxt('estado_funcional', 'Estado funcional')}
       ${rArea('danos_preexistentes', 'Daños o condiciones preexistentes')}` : ''}
@@ -2597,7 +2599,8 @@ function alElegirEnResguardo(k, valor) {
 function validarResguardo() {
   const e = [];
   if (!res.colaborador_id) e.push('Elige al colaborador.');
-  if (!res.linea_id && !res.equipo_id) e.push('Elige una línea, un celular o ambos.');
+  if (res.tipo === 'LINEA' && !res.linea_id) e.push('Elige la línea que se entrega.');
+  if (res.tipo === 'NORMAL' && !res.equipo_id) e.push('Elige el celular. Si solo entregas el chip, usa el tipo "Solo línea".');
   if (res.tipo === 'MONITOREADO') {
     if (!res.linea_id || !res.equipo_id) e.push('El resguardo monitoreado requiere línea y celular.');
     if (!res.acepta_monitoreo) e.push('Marca que el colaborador acepta el monitoreo.');
@@ -2618,7 +2621,7 @@ async function guardarResguardo() {
   const num = v => v === '' || v == null ? null : aNum(v);
   const p = {
     tipo: res.tipo, colaborador_id: Number(res.colaborador_id),
-    linea_id: res.linea_id ? Number(res.linea_id) : null, equipo_id: res.equipo_id ? Number(res.equipo_id) : null,
+    linea_id: res.linea_id ? Number(res.linea_id) : null, equipo_id: res.equipo_id && res.tipo !== 'LINEA' ? Number(res.equipo_id) : null,
     fecha_entrega: res.fecha_entrega, plazo_meses: Number(res.plazo_meses), equipo_nuevo: !!res.equipo_nuevo,
     color: res.color || null, accesorios: res.accesorios || null, estado_fisico: res.estado_fisico || null,
     estado_funcional: res.estado_funcional || null, danos_preexistentes: res.danos_preexistentes || null,
@@ -2626,6 +2629,7 @@ async function guardarResguardo() {
     monto_diferencia: res.tipo === 'DIFERENCIA' ? num(res.monto_diferencia) : null,
     parcialidades: res.tipo === 'DIFERENCIA' ? num(res.parcialidades) : null,
     acepta_monitoreo: res.tipo === 'MONITOREADO' && !!res.acepta_monitoreo,
+    equipo_personal: res.tipo === 'LINEA' ? (res.equipo_personal || null) : null,
   };
   const btn = $('btnGuardar');
   btn.disabled = true; btn.textContent = 'Guardando…';
@@ -2759,7 +2763,7 @@ $('panelCampos').addEventListener('change', e => {
   if (!k) return;
   if (el.type === 'hidden') return alElegirEnResguardo(k, el.value);
   if (el.type === 'checkbox') res[k] = el.checked;
-  else if (el.type === 'radio') res[k] = el.value;
+  else if (el.type === 'radio') { res[k] = el.value; if (k === 'tipo' && el.value === 'LINEA') res.equipo_id = ''; }
   else if (k === 'equipo_nuevo') res[k] = el.value === '1';
   else return;
   if (k === 'incluirTodos' && !el.checked) {
@@ -2829,6 +2833,52 @@ function imprimirResguardo(r) {
         <tr><td colspan="2" class="testigos">TESTIGOS</td></tr>
         <tr><td><div class="linea"></div>${EMPRESA.testigo}</td><td><div class="linea"></div>C. ${v(jefe ? nombreDe(jefe).toUpperCase() : '')}</td></tr></table>
       <p class="obs"><b>Observaciones:</b> ${v(r.observaciones) || '<span class="raya"></span>'}</p>`;
+  }
+
+  if (r.tipo === 'LINEA') {
+    const fila = (c, d) => `<tr><td>${c}</td><td>${d}</td></tr>`;
+    cuerpo = `${encabezadoLogos}<div class="banda">${EMPRESA.razonCorta}</div>
+      <h1 style="margin-bottom:0">RESGUARDO DE LÍNEA TELEFÓNICA</h1>
+      <p class="centro" style="margin-bottom:12px">(CHIP / TARJETA SIM)</p>
+      <h2>DATOS DEL COLABORADOR</h2>
+      <p class="dato">Nombre: <u>${v(nombreDe(colab))}</u> &nbsp;&nbsp; Número de empleado: <u>${v(colab.num_empleado)}</u></p>
+      <p class="dato">Puesto: <u>${v(colab.puesto)}</u> &nbsp;&nbsp; Área / Sucursal: <u>${v(area)}</u></p>
+      <p class="dato">Fecha de entrega: <u>${fechaLarga(r.fecha_entrega)}</u></p>
+      <h2>DATOS DE LA LÍNEA ASIGNADA</h2>
+      <table class="tabla"><thead><tr><th>Concepto</th><th>Descripción</th></tr></thead><tbody>
+        ${fila('Número telefónico', v(lin.telefono))}${fila('Compañía', v(lin.operador || 'TELCEL'))}${fila('Plan', v(lin.plan))}
+        ${fila('ICCID (número del chip)', v(lin.iccid))}${fila('Tipo de SIM', lin.esim ? 'eSIM' : 'Física')}
+        ${fila('Equipo en el que se usará', v(r.equipo_personal))}
+      </tbody></table>
+      <h2>DECLARACIÓN DE RECEPCIÓN</h2>
+      <p class="just">Por medio del presente, hago constar que recibí de CAR Comercializadora, S.A. de C.V. la línea telefónica y el chip (tarjeta SIM) anteriormente descritos, para utilizarlos como herramienta de trabajo en el desempeño de mis funciones laborales.</p>
+      <p class="just">Reconozco que la línea está contratada a nombre de la empresa, que esta es su titular y que el número telefónico y el chip son propiedad de la empresa, por lo que me comprometo a utilizarlos de manera adecuada y responsable, de conformidad con los artículos 134, fracciones III, IV y VI, y 135, fracción IX, de la Ley Federal del Trabajo.</p>
+      <h2>CONDICIONES DE USO</h2>
+      <p><b>Me comprometo a:</b></p>
+      <ol class="just">
+        <li>Utilizar la línea para fines laborales y mantenerla activa y disponible durante mi jornada de trabajo.</li>
+        <li>No ceder, prestar ni transferir el chip o la línea a otras personas, ni cambiarlo a un equipo distinto al indicado en este resguardo sin avisar al área de Sistemas.</li>
+        <li>No solicitar directamente a la compañía telefónica cambios de plan, servicios adicionales, portabilidad, cambio de titular ni reposición del chip; cualquier trámite se realizará a través del área de Sistemas.</li>
+        <li>Hacer un uso responsable de los servicios incluidos en el plan y evitar consumos que generen cargos adicionales no autorizados, como llamadas o datos en el extranjero (roaming), números de tarificación especial, suscripciones a contenidos o compras con cargo a la línea.</li>
+        <li>Reportar de inmediato al área de Sistemas el robo, extravío o daño del chip o del equipo en el que se encuentra, para solicitar la suspensión de la línea.</li>
+        <li>Devolver el chip y la línea cuando la empresa lo solicite, al término de la relación laboral o cuando dejen de ser necesarios para mis funciones. El número telefónico es de la empresa y no podrá ser transferido a mi nombre.</li>
+      </ol>
+      <h2>CONSULTA DE CONSUMO Y FACTURACIÓN</h2>
+      <p class="just">Reconozco y acepto que, por tratarse de una línea contratada y pagada por la empresa, esta podrá consultar la información de consumo y facturación que le proporciona la compañía telefónica, como llamadas, mensajes, uso de datos y cargos generados, para fines de administración, control de costos y supervisión del uso adecuado de la línea, respetando la privacidad del colaborador y las disposiciones aplicables en materia de protección de datos personales.</p>
+      <h2>CARGOS NO AUTORIZADOS Y AUTORIZACIÓN DE DESCUENTOS</h2>
+      <p class="just">Autorizo expresamente a CAR Comercializadora, S.A. de C.V. para que, cuando se generen cargos adicionales al plan por un uso no autorizado o ajeno a mis funciones, o por la reposición del chip derivada de negligencia o mal uso imputable a mi persona, pueda realizar los descuentos correspondientes de mi salario, de conformidad con lo establecido en el artículo 110, fracción I, de la Ley Federal del Trabajo, sujetos a las siguientes condiciones:</p>
+      <ol class="just">
+        <li>Que el cargo esté documentado en la facturación de la compañía telefónica y sea atribuible a mi uso.</li>
+        <li>Que la cantidad exigible no exceda el importe de un mes de mi salario, conforme al límite establecido en el artículo 110, fracción I, de la Ley Federal del Trabajo.</li>
+        <li>Que el importe y la forma de aplicación de los descuentos sean acordados entre la empresa y mi persona, sin exceder el 30% del excedente del salario mínimo, en los términos del mismo artículo.</li>
+      </ol>
+      <h2>ACEPTACIÓN</h2>
+      <p class="just">Declaro haber recibido la línea telefónica y el chip descritos en este documento, y conocer y aceptar las condiciones de uso, consulta de consumo, cargos no autorizados y autorización de descuentos aquí establecidas.</p>
+      <p>En constancia de lo anterior, firmo de conformidad.</p>
+      <p class="derecha" style="margin:18px 0 0">${EMPRESA.lugar} ${fechaLarga(r.fecha_entrega).toUpperCase()}</p>
+      <table class="firmas"><tr><td>RECIBIÓ<div class="linea"></div>${v(nombre)}</td><td>ENTREGÓ<div class="linea"></div>${v((r.entrega_nombre || '').toUpperCase())}</td></tr>
+        <tr><td>JEFE INMEDIATO<div class="linea"></div>${v(jefe ? nombreDe(jefe).toUpperCase() : '')}</td><td></td></tr></table>
+      ${r.observaciones ? `<p class="obs"><b>Observaciones:</b> ${v(r.observaciones)}</p>` : ''}`;
   }
 
   if (r.tipo === 'MONITOREADO') {
