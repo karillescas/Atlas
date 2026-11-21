@@ -774,6 +774,12 @@ const VISTAS_EQUIPOS = {
     cols: ['Tipo', 'Marca y modelo', 'Descripción', 'Serie', 'Cant.', 'Origen', 'Centro de costo', 'Proveedor', 'Factura / remisión',
            'Fecha compra', 'Costo s/IVA', 'Costo c/IVA', 'Precio empleado', 'Condición', 'Estatus'] },
   celulares: { categoria: 'CELULARES', titulo: 'Celulares', conImei: true,
+    acciones: [
+      { texto: 'Cargar XML', fn: () => abrirCompra('XML') },
+      { texto: 'Registrar remisión', fn: () => abrirCompra('REMISION') },
+      { texto: 'Descargar layout', fn: () => descargarLayoutCelulares() },
+      { texto: 'Cargar desde Excel', fn: () => abrirCargaCelulares() },
+    ],
     descripcion: 'Teléfonos celulares con su IMEI.',
     cols: ['Marca y modelo', 'Color', 'IMEI', 'Serie', 'Línea', 'Asignado a', 'Condición', 'Centro de costo', 'Proveedor',
            'Factura / remisión', 'Fecha compra', 'Costo s/IVA', 'Costo c/IVA', 'Precio empleado', 'Estatus'] },
@@ -788,7 +794,7 @@ const VISTAS_EQUIPOS = {
     Object.entries(VISTAS_EQUIPOS).forEach(([vk, vista]) => {
       CATALOGOS[vk] = {
         ...base, oculto: false, fuente: 'equipos', categoria: vista.categoria,
-        titulo: vista.titulo, descripcion: vista.descripcion,
+        titulo: vista.titulo, descripcion: vista.descripcion, acciones: vista.acciones || base.acciones,
         columnas: vista.cols.map(t => base.columnas.find(c => c.t === t)),
         campos: base.campos
           .filter(c => c.k !== 'imei' || vista.conImei)
@@ -1488,6 +1494,7 @@ $('formRegistro').addEventListener('submit', async e => {
   if (modoPanel === 'cargaColab') { await ejecutarCargaColab(); return; }
   if (modoPanel === 'compra') { await avanzarCompra(); return; }
   if (modoPanel === 'resguardo') { await guardarResguardo(); return; }
+  if (modoPanel === 'cargaCel') { await procesarCargaCelulares(); return; }
   if (modoPanel === 'verResguardo') return;
   const cat = CATALOGOS[actual];
   const payload = leerFormulario(cat);
@@ -2985,6 +2992,180 @@ function imprimirResguardo(r) {
   const w = window.open('', '_blank');
   if (!w) return toast('El navegador bloqueó la ventana. Permite las ventanas emergentes para este sitio.', true);
   w.document.open(); w.document.write(doc); w.document.close();
+}
+
+/* =========================================================
+   7f. CARGA DE CELULARES DESDE EXCEL (sin factura)
+   ========================================================= */
+const LAYOUT_CEL = [
+  { h: 'Marca*', k: 'marca', ancho: 14, ej: 'Samsung' },
+  { h: 'Modelo*', k: 'modelo', ancho: 24, ej: 'A57 5G' },
+  { h: 'IMEI*', k: 'imei', ancho: 18, ej: '357443191484188' },
+  { h: 'Color', k: 'color', ancho: 12, ej: 'Negro' },
+  { h: 'Número de serie (opcional)', k: 'serie', ancho: 24, ej: '' },
+  { h: 'Precio de lista*', k: 'precio_lista', ancho: 16, ej: '5000' },
+  { h: 'Precio empleado', k: 'precio_empleado', ancho: 16, ej: '4500' },
+  { h: 'Proveedor (RFC o nombre)', k: 'proveedor', ancho: 26, ej: 'RADIOMOVIL DIPSA' },
+  { h: 'Folio o documento', k: 'folio', ancho: 18, ej: 'IU 71002393' },
+  { h: 'Fecha de compra (dd/mm/aaaa)', k: 'fecha', ancho: 22, ej: '15/01/2024' },
+  { h: 'Clave centro de costo', k: 'centro', ancho: 20, ej: '' },
+];
+let cargaCel = null;
+
+function descargarLayoutCelulares() {
+  const wb = XLSX.utils.book_new();
+  const hoja = XLSX.utils.aoa_to_sheet([LAYOUT_CEL.map(c => c.h)]);
+  hoja['!cols'] = LAYOUT_CEL.map(c => ({ wch: c.ancho }));
+  XLSX.utils.book_append_sheet(wb, hoja, 'Celulares');
+  const instr = XLSX.utils.aoa_to_sheet([
+    ['Cómo llenar este layout'], [''],
+    ['1. Un celular por renglón. El IMEI (15 dígitos) es obligatorio y no puede repetirse.'],
+    ['2. Marca y modelo: si no existen en el sistema se dan de alta solos. No hace falta repetir la marca en el modelo.'],
+    ['3. Precio de lista es el costo del equipo. Al subirlo indicas si incluye IVA.'],
+    ['4. Número de serie es opcional. Si en tu archivo esa columna trae el folio del documento (se repite en varios equipos), déjala vacía y escribe el folio al subir el archivo.'],
+    ['5. Proveedor, folio, fecha y centro de costo pueden ir en cada renglón (carga histórica). Si los dejas vacíos se usan los que elijas al subir el archivo.'],
+    ['6. Proveedor: escribe su RFC o su nombre tal como está en Proveedores (hoja "Proveedores"). Centro de costo: su clave (hoja "Centros de costo").'],
+    ['7. Se crea una compra por cada proveedor y folio. Los renglones sin folio se agrupan como "CARGA HISTORICA" con su fecha.'],
+    [''], ['Ejemplo:'], LAYOUT_CEL.map(c => c.h), LAYOUT_CEL.map(c => c.ej),
+  ]);
+  instr['!cols'] = [{ wch: 110 }];
+  XLSX.utils.book_append_sheet(wb, instr, 'Instrucciones');
+  const mods = aux.modelos.filter(m => tipoPorId(m.tipo_id)?.categoria === 'CELULARES' && m.activo);
+  const hm = XLSX.utils.aoa_to_sheet([['Marca', 'Modelo'], ...mods.map(m => [m.marca, m.nombre])]);
+  hm['!cols'] = [{ wch: 16 }, { wch: 30 }];
+  XLSX.utils.book_append_sheet(wb, hm, 'Modelos registrados');
+  const hp = XLSX.utils.aoa_to_sheet([['RFC', 'Razón social'], ...aux.proveedores.filter(p => p.activo).map(p => [p.rfc, p.razon_social])]);
+  hp['!cols'] = [{ wch: 16 }, { wch: 44 }];
+  XLSX.utils.book_append_sheet(wb, hp, 'Proveedores');
+  const hc = XLSX.utils.aoa_to_sheet([['Clave', 'Nombre'], ...aux.centros.filter(c => c.activo).map(c => [c.clave, c.nombre])]);
+  hc['!cols'] = [{ wch: 16 }, { wch: 40 }];
+  XLSX.utils.book_append_sheet(wb, hc, 'Centros de costo');
+  XLSX.writeFile(wb, 'layout_celulares.xlsx');
+}
+
+function columnaCelular(t) {
+  const n = normalizarEncabezado(t);
+  if (n.includes('centro')) return 'centro';
+  if (n.startsWith('proveedor')) return 'proveedor';
+  if (n.startsWith('folio') || n.includes('documento') || n.includes('factura')) return 'folio';
+  if (n.startsWith('fecha')) return 'fecha';
+  if (n.startsWith('marca')) return 'marca';
+  if (n.startsWith('modelo')) return 'modelo';
+  if (n.includes('imei')) return 'imei';
+  if (n.startsWith('color')) return 'color';
+  if (n.includes('serie')) return 'serie';
+  if (n.includes('empleado')) return 'precio_empleado';
+  if (n.includes('lista') || n.includes('costo') || n.startsWith('precio')) return 'precio_lista';
+  return null;
+}
+
+function abrirCargaCelulares() {
+  modoPanel = 'cargaCel';
+  editando = null;
+  cargaCel = { filas: null, archivo: '', revisado: null };
+  const optsProv = aux.proveedores.filter(p => p.activo).map(p => `<option value="${p.id}">${esc(p.razon_social)}</option>`).join('');
+  const optsCc = aux.centros.filter(c => c.activo).map(c => `<option value="${c.id}">${esc(`${c.clave} ${c.nombre}`)}</option>`).join('');
+  $('panelTitulo').textContent = 'Cargar celulares desde Excel';
+  $('panelCampos').innerHTML = `
+    <p class="paso">Para celulares sin factura o carga histórica. Usa el layout de "Descargar layout". Proveedor, centro de costo, fecha y folio pueden venir en cada renglón; lo que elijas aquí se usa para los renglones que los traigan vacíos.</p>
+    <div class="rejilla">
+      <label class="campo"><span class="etq">Proveedor</span><select id="ccProv"><option value="">Selecciona…</option>${optsProv}</select></label>
+      <label class="campo"><span class="etq">Centro de costo</span><select id="ccCentro"><option value="">Selecciona…</option>${optsCc}</select></label>
+      <label class="campo"><span class="etq">Fecha de compra</span><input type="date" id="ccFecha" value=""></label>
+      <label class="campo"><span class="etq">Folio o documento</span><input type="text" id="ccFolio" placeholder="Opcional"></label>
+      <label class="campo"><span class="etq">Condición inicial</span><select id="ccCond">
+        <option value="SIN_DEFINIR">Sin definir</option><option value="DISPONIBLE">Disponible</option></select></label>
+    </div>
+    <label class="opcion"><input type="checkbox" id="ccIva" checked> <span>El precio de lista ya incluye IVA</span></label>
+    <div class="zona-archivo" style="margin-top:1rem"><input type="file" id="ccArchivo" accept=".xlsx,.xls,.csv" aria-label="Archivo de celulares"></div>
+    <div id="ccVista"></div>`;
+  $('btnGuardar').hidden = false;
+  $('btnGuardar').textContent = 'Revisar';
+  $('btnCancelar').textContent = 'Cerrar';
+  $('ccArchivo').addEventListener('change', leerArchivoCelulares);
+  ['ccProv', 'ccCentro', 'ccFecha', 'ccFolio', 'ccIva', 'ccCond'].forEach(id => $(id).addEventListener('change', () => {
+    if (cargaCel.revisado) { cargaCel.revisado = null; $('btnGuardar').textContent = 'Revisar'; $('ccVista').innerHTML = ''; }
+  }));
+  $('panel').showModal();
+}
+
+async function leerArchivoCelulares(e) {
+  const file = e.target.files[0];
+  cargaCel.filas = null; cargaCel.revisado = null;
+  $('btnGuardar').textContent = 'Revisar';
+  if (!file) return;
+  try {
+    const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
+    const hojaX = wb.Sheets[wb.SheetNames[0]];
+    // Texto tal como se ve en Excel, salvo las celdas de fecha, que se pasan a aaaa-mm-dd
+    const texto = XLSX.utils.sheet_to_json(hojaX, { header: 1, raw: false, defval: '' });
+    const crudo = XLSX.utils.sheet_to_json(hojaX, { header: 1, raw: true, defval: '' });
+    const iso = dt => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+    const matriz = texto.map((fila, i) => fila.map((v, j) => Object.prototype.toString.call(crudo[i]?.[j]) === '[object Date]' ? iso(crudo[i][j]) : v));
+    const enc = (matriz[0] || []).map(columnaCelular);
+    if (!enc.includes('imei') || !enc.includes('marca') || !enc.includes('modelo')) {
+      $('ccVista').innerHTML = '<div class="aviso">No encuentro las columnas de marca, modelo e IMEI. Usa el layout de "Descargar layout".</div>';
+      return;
+    }
+    cargaCel.filas = matriz.slice(1).map((arr, i) => {
+      const o = { _fila: i + 2 };
+      enc.forEach((k, j) => { if (k) o[k] = String(arr[j] ?? '').trim(); });
+      // Marca como ya está registrada; el modelo sin repetir la marca al inicio
+      const reg = aux.marcas.find(m => sinAcentos(m.nombre) === sinAcentos(o.marca));
+      if (reg) o.marca = reg.nombre;
+      else if (o.marca && o.marca === o.marca.toUpperCase()) o.marca = o.marca.charAt(0) + o.marca.slice(1).toLowerCase();
+      if (o.modelo && o.marca) o.modelo = o.modelo.replace(new RegExp('^' + o.marca.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s+', 'i'), '');
+      return o;
+    }).filter(o => Object.keys(o).some(k => k !== '_fila' && o[k]));
+    cargaCel.archivo = file.name;
+    $('ccVista').innerHTML = `<p class="paso">${cargaCel.filas.length} renglones leídos. Completa los datos de arriba y da clic en <b>Revisar</b>.</p>`;
+  } catch (err) {
+    $('ccVista').innerHTML = `<div class="aviso">No se pudo leer el archivo: ${esc(err.message)}</div>`;
+  }
+}
+
+function datosCargaCel() {
+  return { proveedor_id: $('ccProv').value, centro_costo_id: $('ccCentro').value, fecha: $('ccFecha').value,
+           folio: $('ccFolio').value.trim(), con_iva: $('ccIva').checked, condicion: $('ccCond').value,
+           notas: `Celulares cargados desde Excel (${cargaCel.archivo})`, filas: cargaCel.filas };
+}
+
+async function procesarCargaCelulares() {
+  if (!cargaCel?.filas?.length) return toast('Primero elige el archivo.', true);
+  const p = datosCargaCel();
+  const aplicar = !!cargaCel.revisado;
+  const btn = $('btnGuardar');
+  const texto = btn.textContent;
+  btn.disabled = true; btn.textContent = aplicar ? 'Guardando…' : 'Revisando…';
+  const { data, error } = await sb.rpc('importar_celulares', { p, p_aplicar: aplicar });
+  btn.disabled = false; btn.textContent = texto;
+  if (error) { toast(traducirError(error), true); return; }
+  const lista = (t, l) => l.length ? `<p class="paso"><b>${t}:</b> ${l.map(esc).join(', ')}</p>` : '';
+  if (aplicar && data.aplicado) {
+    $('ccVista').innerHTML = `<p><strong>Celulares cargados.</strong></p>
+      <div class="cifras"><div><strong>${data.total}</strong><span>celulares dados de alta</span></div>
+      <div><strong>${data.compras}</strong><span>compra(s): ${esc((data.folios || []).join(', '))}</span></div></div>
+      ${lista('Marcas nuevas', data.marcas_nuevas)}${lista('Modelos nuevos', data.modelos_nuevos)}`;
+    btn.hidden = true;
+    cargaCel = { filas: null, revisado: null };
+    await Promise.all([cargar('equipos'), cargar('compras'), cargar('marcas'), cargar('modelos'), cargarAux()]);
+    mostrar(actual);
+    return;
+  }
+  const errores = data.errores || [];
+  $('ccVista').innerHTML = `
+    <div class="cifras">
+      <div><strong>${data.total}</strong><span>renglones</span></div>
+      <div><strong>${errores.length}</strong><span>con error</span></div>
+      <div><strong>${data.marcas_nuevas.length}</strong><span>marcas nuevas</span></div>
+      <div><strong>${data.modelos_nuevos.length}</strong><span>modelos nuevos</span></div>
+      <div><strong>${data.compras}</strong><span>compras a registrar (una por proveedor y folio)</span></div>
+    </div>
+    ${lista('Se darán de alta las marcas', data.marcas_nuevas)}${lista('Se darán de alta los modelos', data.modelos_nuevos)}
+    ${errores.length ? `<div class="aviso">Corrige el archivo y vuelve a subirlo; no se guardó nada.</div>
+      <ul class="lista-errores">${errores.slice(0, 100).map(x => `<li><strong>Renglón ${x.fila}:</strong> ${esc(x.mensaje)}</li>`).join('')}</ul>`
+    : '<p class="paso">Todo está correcto. Confirma para guardar.</p>'}`;
+  if (!errores.length) { cargaCel.revisado = true; btn.textContent = `Cargar ${data.validos} celulares`; }
 }
 
 /* =========================================================
