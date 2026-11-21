@@ -373,7 +373,7 @@ const REGIMENES = [
 
 const CONTROLES = {
   SERIE:    { etiqueta: 'Por número de serie', ayuda: 'Un renglón por pieza, con serie obligatoria (laptop, monitor).' },
-  IMEI:     { etiqueta: 'Por serie e IMEI',    ayuda: 'Igual que por serie, además exige IMEI (celular, módem).' },
+  IMEI:     { etiqueta: 'Por IMEI',            ayuda: 'Un renglón por pieza con IMEI obligatorio; la serie es opcional (celular, módem).' },
   PIEZA:    { etiqueta: 'Por pieza, sin serie', ayuda: 'Un renglón por pieza para poder asignarla y resguardarla; la serie es opcional (teclado, mouse, diadema).' },
   CANTIDAD: { etiqueta: 'Por cantidad',        ayuda: 'Un solo renglón con la existencia, sin identificar piezas (tóner, cables, materiales).' },
 };
@@ -514,7 +514,7 @@ const CATALOGOS = {
     ],
     validar: p => {
       const e = {}, t = tipoPorId(p.tipo_id);
-      if (t?.requiere_serie && !p.num_serie) e.num_serie = 'Este tipo de equipo requiere número de serie.';
+      if (t?.requiere_serie && !t.requiere_imei && !p.num_serie) e.num_serie = 'Este tipo de equipo requiere número de serie.';
       if (t?.requiere_imei && !p.imei) e.imei = 'Este tipo de equipo requiere IMEI.';
       if (porPieza(t) && p.cantidad !== 1) e.cantidad = 'Este tipo se registra de uno en uno (cantidad 1). Para manejarlo por cantidad, cambia su control en Tipos de equipo.';
       if (p.estatus === 'BAJA' && !p.motivo_baja_id) e.motivo_baja_id = 'Indica el motivo de la baja.';
@@ -1782,7 +1782,9 @@ const esEntero = n => Number.isInteger(Number(n)) && Number(n) > 0;
 function esEnvio(clave, desc) {
   return /^7810/.test(clave || '') || /(env[ií]o|flete|paqueter[ií]a|mensajer[ií]a|shipping|gastos de entrega|costo de entrega)/i.test(desc || '');
 }
+const EQUIPO_COMPLETO = /(celular|smartphone|tel[eé]fono|iphone|galaxy|redmi|xiaomi|motorola|\bmoto\b|honor|oppo|huawei|laptop|notebook|port[aá]til|tablet|\bipad\b|monitor|impresora|all.?in.?one|computadora|equipo de c[oó]mputo)/i;
 function esMaterial(desc) {
+  if (EQUIPO_COMPLETO.test(desc || '')) return false;
   return /(tarjeta madre|motherboard|mainboard|procesador|\bcpu\b|memoria|\bram\b|\bddr\d|\bdimm\b|disco|estado s[oó]lido|\bssd\b|\bhdd\b|\bnvme\b|\bm\.2\b|gabinete|fuente de (poder|alimentaci[oó]n)|tarjeta de video|tarjeta gr[aá]fica|\bgpu\b|disipador|ventilador|cooler|pasta t[eé]rmica|tarjeta de red|antena wi-?fi)/i.test(desc || '');
 }
 function detectarSeries(desc) {
@@ -1806,9 +1808,14 @@ function adivinar(lista, texto, campo = 'nombre') {
 }
 function conceptoNuevo(i, datos) {
   const desc = datos.descripcion || '';
-  const tipo_id = adivinar(aux.tiposFull, desc);
+  let tipo_id = adivinar(aux.tiposFull, desc);
   const marca_id = adivinar(aux.marcas, desc);
   const modelo_id = adivinar(aux.modelos.filter(m => !marca_id || String(m.marca_id) === marca_id), desc);
+  // Si no se reconoce el tipo, se toma el del modelo, o Celular si la descripción es de un teléfono
+  if (!tipo_id && modelo_id) tipo_id = String(aux.modelos.find(m => String(m.id) === modelo_id)?.tipo_id || '');
+  if (!tipo_id && /(celular|smartphone|tel[eé]fono m[oó]vil|iphone|galaxy|redmi|\bmoto\s?[a-z]?\d|reno\d)/i.test(desc)) {
+    tipo_id = String(aux.tiposFull.find(t => t.activo && t.categoria === 'CELULARES')?.id || '');
+  }
   return {
     i, clave: '', noIdent: '', unidad: '', cantidad: 1, importe: 0, descuento: 0, iva: 0, vu: 0, pct: 16,
     rol: 'EQUIPO', series: '', imeis: '', despues: false, centro_costo_id: '', precio_empleado: '',
@@ -1843,7 +1850,9 @@ function leerCFDI(texto) {
       descuento: aNum(n.getAttribute('Descuento')) * f, iva: iva * f,
       series: detectarSeries(descripcion).join('\n'),
     });
-    c.rol = esEnvio(clave, descripcion) ? 'ENVIO' : esMaterial(descripcion) ? 'MATERIAL' : 'EQUIPO';
+    const tAdiv = tipoPorId(c.tipo_id);
+    c.rol = esEnvio(clave, descripcion) ? 'ENVIO'
+      : (esMaterial(descripcion) && !tAdiv?.requiere_serie && tAdiv?.categoria !== 'CELULARES') ? 'MATERIAL' : 'EQUIPO';
     return c;
   });
   if (!conceptos.length) throw new Error('El XML no tiene conceptos.');
@@ -2046,7 +2055,7 @@ function tarjetaConcepto(c) {
     }
     if (c.rol === 'EQUIPO' && t?.requiere_serie) {
       cuerpo += `<div class="rejilla" style="margin-top:.6rem">
-        <label class="campo"><span class="etq">Números de serie <span class="ayuda" data-calc="nser-${c.i}"></span></span>
+        <label class="campo"><span class="etq">Números de serie${t.requiere_imei ? ' (opcional)' : ''} <span class="ayuda" data-calc="nser-${c.i}"></span></span>
           <textarea data-c="${c.i}" data-f="series" placeholder="Una serie por renglón">${esc(c.series)}</textarea></label>
         ${t.requiere_imei ? `<label class="campo"><span class="etq">IMEI <span class="ayuda" data-calc="nimei-${c.i}"></span></span>
           <textarea data-c="${c.i}" data-f="imeis" placeholder="Un IMEI de 15 dígitos por renglón">${esc(c.imeis)}</textarea></label>` : ''}
@@ -2190,7 +2199,7 @@ function pasoResumen() {
   const valorCon = [...p.equipos.map(e => e.costo_con_iva * e.cantidad), ...p.armados.map(e => e.costo_con_iva)].reduce((s, v) => s + v, 0);
   return cabeceraCompraResumen() + `
     <div class="cifras">
-      <div><strong>${conSerie}</strong><span>equipos con serie</span></div>
+      <div><strong>${conSerie}</strong><span>equipos con serie o IMEI</span></div>
       <div><strong>${sueltas}</strong><span>piezas individuales sin serie obligatoria</span></div>
       <div><strong>${porCant.reduce((s, e) => s + e.cantidad, 0)}</strong><span>piezas por cantidad (${porCant.length} renglones)</span></div>
       <div><strong>${p.armados.length}</strong><span>equipos armados</span></div>
@@ -2268,10 +2277,11 @@ function validarPaso() {
       }
       if (c.rol === 'EQUIPO' && t.requiere_serie) {
         const s = renglones(c.series), im = renglones(c.imeis);
-        if (!c.despues && s.length !== aNum(c.cantidad)) err.push(`${nom}: capturaste ${s.length} series y son ${c.cantidad} piezas.`);
-        if (c.despues && s.length > aNum(c.cantidad)) err.push(`${nom}: hay más series (${s.length}) que piezas (${c.cantidad}).`);
+        if (!t.requiere_imei && !c.despues && s.length !== aNum(c.cantidad)) err.push(`${nom}: capturaste ${s.length} series y son ${c.cantidad} piezas.`);
+        if (s.length > aNum(c.cantidad)) err.push(`${nom}: hay más series (${s.length}) que piezas (${c.cantidad}).`);
         if (t.requiere_imei) {
-          if (!c.despues && im.length !== aNum(c.cantidad)) err.push(`${nom}: capturaste ${im.length} IMEI y son ${c.cantidad} piezas.`);
+          if (!c.despues && im.length !== aNum(c.cantidad)) err.push(`${nom}: capturaste ${im.length} IMEI y son ${c.cantidad} piezas. Si aún no los tienes, marca "Capturar después".`);
+          if (im.length > aNum(c.cantidad)) err.push(`${nom}: hay más IMEI (${im.length}) que piezas (${c.cantidad}).`);
           im.filter(x => !/^\d{15}$/.test(x)).forEach(x => err.push(`${nom}: el IMEI ${x} no tiene 15 dígitos.`));
           todosImei.push(...im);
         }
@@ -2350,6 +2360,14 @@ $('panelCampos').addEventListener('change', e => {
   if (el.dataset.c !== undefined) {
     const c = compra.conceptos.find(x => x.i === Number(el.dataset.c));
     c[el.dataset.f] = valor;
+    if (el.dataset.f === 'tipo_id' && c.rol === 'MATERIAL') {
+      const t = tipoPorId(c.tipo_id);
+      if (t?.requiere_serie || t?.categoria === 'CELULARES') c.rol = 'EQUIPO';
+    }
+    if (el.dataset.f === 'rol' && valor === 'MATERIAL') {
+      const t = tipoPorId(c.tipo_id);
+      if (t?.requiere_serie || t?.categoria === 'CELULARES') { c.rol = 'EQUIPO'; toast('Un equipo que se controla por serie o IMEI no puede ser material para armar.', true); }
+    }
     if (el.dataset.f === 'marca_id' || el.dataset.f === 'tipo_id') {
       if (c.modelo_id && !optModelos(c.marca_id, c.tipo_id).some(([id]) => String(id) === String(c.modelo_id))) c.modelo_id = '';
     }
