@@ -693,6 +693,8 @@ const CATALOGOS = {
     descripcion: 'El tipo define si un equipo se controla pieza por pieza o por cantidad, y si requiere resguardo.',
     tabla: 'tipos_equipo', select: '*', orden: 'nombre',
     porDefecto: { categoria: 'COMPUTO' },
+    validar: p => p.categoria === 'CELULARES' && !p.requiere_imei
+      ? { categoria: 'Los tipos del inventario Celulares se controlan "Por IMEI", para registrar un renglón por teléfono.' } : {},
     columnas: [
       { t: 'Clave', v: r => r.clave, clase: 'mono' },
       { t: 'Nombre', v: r => r.nombre },
