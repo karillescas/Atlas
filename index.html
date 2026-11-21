@@ -473,6 +473,7 @@ const CATALOGOS = {
       { t: 'Tipo', v: r => r.tipos_equipo?.nombre, chip: true },
       { t: 'Marca y modelo', v: r => [r.marcas?.nombre, r.modelos?.nombre].filter(Boolean).join(' ') },
       { t: 'Descripción', v: r => r.descripcion },
+      { t: 'Color', v: r => r.color },
       { t: 'Serie', v: r => r.num_serie, clase: 'mono' },
       { t: 'IMEI', v: r => r.imei, clase: 'mono' },
       { t: 'Cant.', v: r => r.cantidad, clase: 'mono' },
@@ -494,6 +495,7 @@ const CATALOGOS = {
       { k: 'marca_id', t: 'Marca', tipo: 'select', num: true, opciones: () => aux.marcas.map(m => [m.id, m.nombre]) },
       { k: 'modelo_id', t: 'Modelo', tipo: 'select', num: true, opciones: r => aux.modelos.filter(m => m.activo || m.id === r.modelo_id).map(m => [m.id, `${m.marca} ${m.nombre}`]) },
       { k: 'descripcion', t: 'Descripción' },
+      { k: 'color', t: 'Color' },
       { k: 'num_serie', t: 'Número de serie', mayus: true },
       { k: 'imei', t: 'IMEI', patron: /^\d{15}$/, msgPatron: 'El IMEI tiene 15 dígitos.' },
       { k: 'cantidad', t: 'Cantidad', req: true, tipo: 'number', ayuda: 'Los equipos con serie van de uno en uno; los consumibles pueden llevar cantidad.' },
@@ -771,7 +773,7 @@ const VISTAS_EQUIPOS = {
            'Fecha compra', 'Costo s/IVA', 'Costo c/IVA', 'Precio empleado', 'Condición', 'Estatus'] },
   celulares: { categoria: 'CELULARES', titulo: 'Celulares', conImei: true,
     descripcion: 'Teléfonos celulares con su IMEI.',
-    cols: ['Marca y modelo', 'Descripción', 'IMEI', 'Serie', 'Línea', 'Asignado a', 'Condición', 'Centro de costo', 'Proveedor',
+    cols: ['Marca y modelo', 'Color', 'IMEI', 'Serie', 'Línea', 'Asignado a', 'Condición', 'Centro de costo', 'Proveedor',
            'Factura / remisión', 'Fecha compra', 'Costo s/IVA', 'Costo c/IVA', 'Precio empleado', 'Estatus'] },
 };
 (function crearInventarios() {
@@ -2590,6 +2592,7 @@ function alElegirEnResguardo(k, valor) {
       if (vida) res.plazo_meses = String(vida);
       res.valor_equipo = e.costo_con_iva ?? '';
       res.monto_diferencia = e.precio_empleado ?? '';
+      if (e.color) res.color = e.color;
       res.equipo_nuevo = !(datos.resguardos || []).some(r => r.equipo_id === e.id);
     }
   }
