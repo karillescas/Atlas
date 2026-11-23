@@ -748,9 +748,19 @@ const CATALOGOS = {
 
   usuarios: {
     grupo: 'Configuración',
-    titulo: 'Usuarios del sistema', singular: 'usuario', nuevo: null, soloAdmin: true,
+    titulo: 'Usuarios del sistema', singular: 'usuario', nuevo: 'Nuevo usuario', soloAdmin: true,
+    nuevoFn: () => abrirNuevoUsuario(),
+    alAbrir: r => {
+      if (!r.id || r.id === perfil.id) return;
+      const div = document.createElement('div');
+      div.className = 'campo';
+      div.innerHTML = `<span class="etq">Contraseña</span><button type="button" class="btn btn-sec btn-chico" id="btnRestablecer">Enviarle correo para cambiar su contraseña</button>
+        <span class="ayuda">Úsalo si olvidó su contraseña. Desmarca "Activo" para quitarle el acceso.</span>`;
+      $('panelCampos').appendChild(div);
+      $('btnRestablecer').addEventListener('click', () => enviarRestablecer(r.email));
+    },
     descripcion: 'Personas que pueden entrar a esta aplicación. Quienes reciben equipos en resguardo se darán de alta en Colaboradores.',
-    nota: 'Para agregar a alguien, invítalo desde Supabase en Authentication > Users. Aparecerá aquí como inactivo con rol Consulta; ábrelo para activarlo y asignarle su rol.',
+    nota: 'Con "Nuevo usuario" creas la cuenta y le asignas su perfil. Ábrelo para cambiar su perfil, enviarle correo para cambiar su contraseña o quitarle el acceso desmarcando "Activo".',
     tabla: 'usuarios', select: '*', orden: 'nombre',
     columnas: [
       { t: 'Nombre', v: r => r.nombre },
@@ -1495,6 +1505,7 @@ $('formRegistro').addEventListener('submit', async e => {
   if (modoPanel === 'compra') { await avanzarCompra(); return; }
   if (modoPanel === 'resguardo') { await guardarResguardo(); return; }
   if (modoPanel === 'cargaCel') { await procesarCargaCelulares(); return; }
+  if (modoPanel === 'nuevoUsuario') { await crearUsuario(); return; }
   if (modoPanel === 'verResguardo') return;
   const cat = CATALOGOS[actual];
   const payload = leerFormulario(cat);
@@ -3166,6 +3177,98 @@ async function procesarCargaCelulares() {
       <ul class="lista-errores">${errores.slice(0, 100).map(x => `<li><strong>Renglón ${x.fila}:</strong> ${esc(x.mensaje)}</li>`).join('')}</ul>`
     : '<p class="paso">Todo está correcto. Confirma para guardar.</p>'}`;
   if (!errores.length) { cargaCel.revisado = true; btn.textContent = `Cargar ${data.validos} celulares`; }
+}
+
+/* =========================================================
+   7g. ALTA DE USUARIOS DESDE LA APLICACIÓN
+   ========================================================= */
+function contrasenaTemporal() {
+  const letras = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz', nums = '23456789', esp = '#$%*+';
+  const elegir = s => s[crypto.getRandomValues(new Uint32Array(1))[0] % s.length];
+  const base = Array.from({ length: 7 }, () => elegir(letras)).join('') + elegir(nums) + elegir(nums) + elegir(esp);
+  return base.split('').sort(() => crypto.getRandomValues(new Uint8Array(1))[0] - 128).join('');
+}
+
+function abrirNuevoUsuario() {
+  modoPanel = 'nuevoUsuario';
+  editando = null;
+  $('panelTitulo').textContent = 'Nuevo usuario';
+  $('panelCampos').innerHTML = `
+    <p class="paso">Crea la cuenta para que la persona entre a este sistema. Tú le compartes su correo y la contraseña temporal.</p>
+    <label class="campo"><span class="etq">Nombre *</span><input type="text" id="nuNombre" autocomplete="off"></label>
+    <label class="campo"><span class="etq">Correo *</span><input type="email" id="nuCorreo" autocomplete="off"></label>
+    <div class="campo"><span class="etq">Contraseña temporal *</span>
+      <div style="display:flex;gap:.5rem"><input type="text" id="nuPass" value="${esc(contrasenaTemporal())}" autocomplete="off" style="font-family:monospace">
+        <button type="button" class="btn btn-sec btn-chico" id="nuGenerar">Otra</button></div>
+      <span class="ayuda">Mínimo 8 caracteres. Podrá cambiarla con "Olvidé mi contraseña".</span></div>
+    <label class="campo"><span class="etq">Perfil *</span><select id="nuRol">
+      <option value="TI" selected>Sistemas: captura inventario, líneas, resguardos y catálogos</option>
+      <option value="CONSULTA">Consulta: solo puede ver</option>
+      <option value="ADMIN">Administrador: todo, incluido dar acceso a otros</option></select></label>
+    <div id="nuResultado"></div>`;
+  $('btnGuardar').hidden = false;
+  $('btnGuardar').textContent = 'Crear usuario';
+  $('btnCancelar').textContent = 'Cancelar';
+  $('nuGenerar').addEventListener('click', () => { $('nuPass').value = contrasenaTemporal(); });
+  $('panel').showModal();
+  $('nuNombre').focus();
+}
+
+async function crearUsuario() {
+  const nombre = $('nuNombre').value.trim(), correo = $('nuCorreo').value.trim().toLowerCase();
+  const pass = $('nuPass').value, rol = $('nuRol').value;
+  if (!nombre || !correo || !pass) return toast('Completa nombre, correo y contraseña.', true);
+  if (!$('nuCorreo').checkValidity()) return toast('El correo no tiene un formato válido.', true);
+  if (pass.length < 8) return toast('La contraseña debe tener al menos 8 caracteres.', true);
+  if ((datos.usuarios || []).some(u => (u.email || '').toLowerCase() === correo)) return toast('Ya existe un usuario con ese correo.', true);
+
+  const btn = $('btnGuardar');
+  btn.disabled = true; btn.textContent = 'Creando…';
+  try {
+    // Cliente aparte, sin guardar sesión, para no cerrar la sesión del administrador
+    const temp = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY,
+      { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: 'alta-usuario-temporal' } });
+    const { data, error } = await temp.auth.signUp({ email: correo, password: pass, options: { data: { nombre } } });
+    if (error) {
+      const m = (error.message || '').toLowerCase();
+      throw new Error(m.includes('signups not allowed') || m.includes('signup is disabled')
+        ? 'En Supabase está desactivado el registro de usuarios. Actívalo en Authentication > Sign In / Providers > "Allow new users to sign up".'
+        : m.includes('password') ? `La contraseña no cumple las reglas de Supabase: ${error.message}`
+        : m.includes('rate limit') ? 'Supabase limita cuántas cuentas se crean por hora. Espera unos minutos e intenta de nuevo.'
+        : error.message);
+    }
+    if (!data.user || (data.user.identities && data.user.identities.length === 0)) throw new Error('Ese correo ya tiene una cuenta en Supabase.');
+    const { data: act, error: e2 } = await sb.rpc('activar_usuario_nuevo', { p_id: data.user.id, p_nombre: nombre, p_rol: rol });
+    if (e2) throw new Error(traducirError(e2));
+    await cargar('usuarios');
+    mostrar(actual);
+    const url = location.href.split('#')[0];
+    $('nuResultado').innerHTML = `
+      <div class="compra-cab" style="margin-top:1rem">
+        <div><dt>Usuario creado y activo</dt><dd>${esc(nombre)} · ${esc(ROLES[rol])}</dd></div>
+      </div>
+      <label class="campo"><span class="etq">Datos para compartir</span>
+        <textarea id="nuCompartir" readonly style="min-height:6rem">Sistema de equipos TI\n${url}\nCorreo: ${correo}\nContraseña temporal: ${pass}</textarea></label>
+      <button type="button" class="btn btn-sec btn-chico" id="nuCopiar">Copiar</button>
+      ${act?.aviso ? `<p class="nota">${esc(act.aviso)}</p>` : ''}`;
+    $('nuCopiar').addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText($('nuCompartir').value); toast('Copiado.'); }
+      catch { $('nuCompartir').select(); toast('Selecciona el texto y cópialo con Ctrl + C.'); }
+    });
+    btn.hidden = true;
+    $('btnCancelar').textContent = 'Cerrar';
+    toast(`Usuario ${nombre} creado.`);
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+    if (!btn.hidden) btn.textContent = 'Crear usuario';
+  }
+}
+
+async function enviarRestablecer(correo) {
+  const { error } = await sb.auth.resetPasswordForEmail(correo, { redirectTo: location.href.split('#')[0] });
+  toast(error ? `No se pudo enviar: ${error.message}` : `Se envió a ${correo} un correo para definir su contraseña.`, !!error);
 }
 
 /* =========================================================
