@@ -555,7 +555,7 @@ const CATALOGOS = {
   resguardos: {
     grupo: 'Resguardos',
     titulo: 'Resguardos', singular: 'resguardo', nuevo: 'Nuevo resguardo', sinActivo: true, sinColEstado: true,
-    descripcion: 'Resguardos de celulares y líneas: normal, con diferencia y monitoreado. Abre uno para imprimirlo, registrar su devolución o transferirlo.',
+    descripcion: 'Resguardos de celulares y líneas: normal, solo línea, arrendamiento y monitoreado. Abre uno para imprimirlo, registrar su devolución o transferirlo.',
     tabla: 'resguardos', orden: 'id',
     select: '*, lineas(telefono, plan, iccid, esim, operador), equipos(descripcion, imei, num_serie, costo_con_iva, precio_empleado, marcas(nombre), modelos(nombre))',
     nuevoFn: () => abrirResguardo(),
@@ -575,7 +575,7 @@ const CATALOGOS = {
       { t: 'Folio', v: r => folioRes(r.id), ord: r => r.id, clase: 'mono' },
       { t: 'Tipo', v: r => TIPOS_RESGUARDO[r.tipo]?.t, chip: true },
       { t: 'Colaborador', v: r => nombreDe((datos.colaboradores || []).find(c => c.id === r.colaborador_id)) },
-      { t: 'Área', v: r => (datos.colaboradores || []).find(c => c.id === r.colaborador_id)?.area },
+      { t: 'Centro de costo', v: r => { const cc = (datos.colaboradores || []).find(c => c.id === r.colaborador_id)?.centros_costo; return cc ? `${cc.clave} ${cc.nombre}` : ''; } },
       { t: 'Línea', v: r => r.lineas?.telefono, clase: 'mono' },
       { t: 'Celular', v: r => celularTexto(r.equipos) },
       { t: 'IMEI', v: r => r.equipos?.imei, clase: 'mono' },
@@ -2422,7 +2422,7 @@ const EMPRESA = {
 const TIPOS_RESGUARDO = {
   NORMAL: { t: 'Normal', d: 'Celular sin cargo para el colaborador, con o sin línea.' },
   LINEA: { t: 'Solo línea (chip)', d: 'Se entrega únicamente la línea o chip, sin celular de la empresa. Incluye condiciones de uso de la línea.' },
-  DIFERENCIA: { t: 'Con diferencia', d: 'El colaborador paga el precio empleado por nómina y al terminar el plazo el celular pasa a ser suyo.' },
+  DIFERENCIA: { t: 'Arrendamiento', d: 'El colaborador paga el precio empleado por nómina y al terminar el plazo el celular pasa a ser suyo.' },
   MONITOREADO: { t: 'Monitoreado', d: 'Línea y celular obligatorios. El colaborador acepta que el equipo sea monitoreado.' },
 };
 const ESTATUS_RESGUARDO = { VIGENTE: 'Vigente', DEVUELTO: 'Devuelto', TRANSFERIDO: 'Transferido al colaborador', CANCELADO: 'Cancelado' };
@@ -2647,7 +2647,7 @@ function validarResguardo() {
     if (!res.acepta_monitoreo) e.push('Marca que el colaborador acepta el monitoreo.');
   }
   if (res.tipo === 'DIFERENCIA') {
-    if (!res.equipo_id) e.push('El resguardo con diferencia requiere un celular.');
+    if (!res.equipo_id) e.push('El resguardo de arrendamiento requiere un celular.');
     if (!(aNum(res.monto_diferencia) > 0)) e.push('Indica el monto que paga el colaborador.');
     if (!esEntero(res.parcialidades)) e.push('Indica en cuántas parcialidades se descuenta.');
   }
